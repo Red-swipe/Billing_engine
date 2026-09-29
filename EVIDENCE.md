@@ -365,3 +365,57 @@ HTTP/1.1 200 OK
 `tokens_used` is 170 = 100 + 0 + 50 + 20, matching the request. A fresh clone
 can therefore install, configure, seed, start, create a tenant, meter a request
 and read usage using only committed files.
+
+---
+
+## STAGE 3 — STRIPE EVIDENCE
+
+### Automated Stripe and regression tests
+
+Executed from the committed Stage 3 tree with the project virtual environment:
+
+```
+$ .\\venv\\Scripts\\python.exe -m pytest -q
+50 passed, 1 warning in 76.82s
+```
+
+The suite includes mocked Checkout API calls and SDK-generated valid webhook
+signatures, plus invalid/tampered signatures, customer reuse, missing
+configuration, unknown tenants/events, checkout completion, subscription
+updates/deletion, database-backed duplicate delivery, and the existing Stage 2
+metering tests. No real Stripe API call was made by pytest.
+
+### Fresh-clone verification
+
+The committed `main` tree was cloned to a new directory. The command sequence
+created `.env` from `.env.example`, ran `pip install -r requirements.txt`, and
+ran `seed.py` successfully:
+
+```
+Seeded plans [Free (1), Pro (2)] and tenant Test Tenant <test@example.com>
+```
+
+The clone's full suite then passed:
+
+```
+50 passed, 1 warning in 89.41s
+```
+
+A temporary uvicorn process from the clone was started and terminated after the
+finite probe:
+
+```
+GET /health -> 200 {"status":"ok"}
+```
+
+### Real Stripe test-mode probe
+
+```
+Automated/mock Stripe tests: PASS
+Real Stripe test-mode probe: BLOCKED / NOT RUN
+Reason: no confirmed real Stripe test credentials or Stripe CLI were available;
+the repository contains placeholders only, so no live result is claimed.
+```
+
+No `.env`, database, log, pid, cache, or secret file was staged in the Stage 3
+commit. The working tree was clean after commit creation.
