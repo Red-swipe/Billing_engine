@@ -80,9 +80,10 @@ Seed rows:
 | `cached_input_tokens` | int | NOT NULL, DEFAULT 0 | |
 | `output_tokens` | int | NOT NULL, DEFAULT 0 | |
 | `reasoning_tokens` | int | NOT NULL, DEFAULT 0 | |
-| `idempotency_key` | str | NOT NULL, UNIQUE | Client-supplied; the retry guard |
-| `response_body` | text | NULLABLE | JSON string snapshot of the response |
-| `created_at` | datetime | NOT NULL, INDEX | |
+| `idempotency_key` | str | NOT NULL, UNIQUE | Client-supplied via `X-Idempotency-Key`; the retry guard |
+| `response_body` | text | NULLABLE | JSON string snapshot of the response, written in the same transaction |
+| `response_status_code` | int | NULLABLE | Status to replay for this key. Required so a retry returns the original status, not just the original body |
+| `created_at` | datetime | NOT NULL, INDEX | Naive UTC |
 
 **Why one row per request instead of a `type` + `quantity` design.**
 
@@ -126,15 +127,15 @@ requiring a schema change.
 | Column | Type | Constraints | Notes |
 |---|---|---|---|
 | `id` | int | PK, autoincrement | |
-| `event_id` | str | NOT NULL, UNIQUE | Stripe's `evt_...`; the replay guard |
+| `stripe_event_id` | str | NOT NULL, UNIQUE | Stripe's `evt_...`; the replay guard |
 | `event_type` | str | NOT NULL | e.g. `checkout.session.completed` |
 | `payload` | text | NOT NULL | Raw JSON body as received |
 | `processed` | bool | NOT NULL, DEFAULT false | Set true after handlers succeed |
 | `created_at` | datetime | NOT NULL | |
 
 Stripe retries any webhook it does not receive a `2xx` for, so every event is
-written before handling. A duplicate delivery hits `UNIQUE(event_id)` and is
-acknowledged without reprocessing.
+written before handling. A duplicate delivery hits `UNIQUE(stripe_event_id)`
+and is acknowledged without reprocessing.
 
 ## Plan Limits
 
@@ -148,6 +149,24 @@ reasoning_tokens` over the current period. `cached_input_tokens` **counts toward
 the limit** — cached tokens are free to the provider but still consume the
 tenant's quota, otherwise cache-heavy tenants would meter near zero.
 
+The boundary is **inclusive at the limit**: a tenant sitting at exactly
+`api_calls_limit` (1,000 on Free) is allowed its last call, and the next call is
+rejected. The check is `used + requested > limit`, not `>=`.
+
+## Implementation Status
+
+| Area | State |
+|---|---|
+| `POST /tenants` | Implemented (incl. automatic active Free subscription) |
+| `POST /generate` | Implemented (header idempotency, quota before insert, exact replay) |
+| `GET /usage/{tenant_id}` | Implemented (UTC calendar month) |
+| `GET /checkout/{tenant_id}` | **Not implemented.** Design only, below. |
+| `POST /webhooks/stripe` | **Not implemented.** Design only, below. |
+| Pricing / cost calculation | **Not implemented.** `price_cents` exists on `plans`; no cost is computed or stored per request. |
+| `stripe_events` table | Schema only. The table exists; no code writes to it. |
+| Subscription lifecycle webhooks | Not implemented. |
+| Migrations | Alembic is a dependency but unused. Tables are created with `Base.metadata.create_all`. |
+
 ## API Surface
 
 ### `POST /tenants`
@@ -157,49 +176,163 @@ Create a tenant on the Free plan.
 Request: `{ "name": str, "email": str }`
 Response `201`: `{ "id": int, "name": str, "email": str, "plan": "Free", "status": "active" }`
 
+Behavior:
+
+1. Look up `email`. An existing tenant returns `409` (`UNIQUE` constraint on
+   `tenants.email`).
+2. Insert the tenant with `plan_id` = Free and `status` = `'active'`.
+3. In the **same transaction**, insert the tenant's `subscriptions` row with
+   `plan_id` = Free and `status` = `'active'`, and `stripe_subscription_id` left
+   NULL (a Free tenant has no Stripe subscription).
+4. Commit once. A tenant is never observable without its subscription, so
+   `POST /generate` never finds a just-created tenant in the `402` state.
+
+A new tenant is on the Free plan by default, so this endpoint must return a
+tenant that can immediately generate. A Free tenant is not a Stripe customer
+and has no billing relationship to wait on, which is why the subscription is
+active at creation rather than awaiting a webhook.
+
 Errors: `409` if `email` already exists (the `UNIQUE` constraint).
 
 ### `POST /generate`
 
-Metered inference call. This is the only endpoint that writes `usage_events`.
+A **dummy billable action**. There is no real model call. The client supplies
+the token counts, and the engine's job is to meter them exactly once, enforce
+quota, and support exact replay. This keeps the billing machinery real while
+removing any dependency on an inference provider.
 
-Request:
+#### Idempotency key
+
+Supplied **only** via the `X-Idempotency-Key` request header. It is not part of
+the JSON body.
+
+- A request with no `X-Idempotency-Key` (or a blank one) is rejected with
+  **400** and creates nothing.
+- The server never synthesises a key. A server-generated key cannot make a
+  retry idempotent, which is the entire purpose of the header.
+
+#### Request
 
 ```json
 {
   "tenant_id": 1,
-  "idempotency_key": "client-generated-uuid",
-  "prompt": "...",
-  "model": "...",
-  "stream": false
+  "input_tokens": 100,
+  "cached_input_tokens": 0,
+  "output_tokens": 50,
+  "reasoning_tokens": 20
 }
 ```
 
-Behavior:
+All four token counts must be non-negative integers. Pydantic rejects
+negatives, non-integers, and malformed `tenant_id` with **422** before any
+database work, so a validation failure can never create a `usage_events` row.
 
-1. Insert a `usage_events` row carrying the `idempotency_key`.
-   If the insert violates `UNIQUE(idempotency_key)`, the row already exists —
-   return the stored `response_body` and **do not** bill again.
-2. Enforce the tenant's plan limits. A request that would exceed
-   `api_calls_limit` or `tokens_limit` for the period returns `429` and writes no
-   `usage_events` row.
-3. Return the completion, persisting it into that same row's `response_body`.
+#### Response (200)
 
-Response: completion payload plus
-`{ "usage_event_id": int, "input_tokens": int, "output_tokens": int,
-"cached_input_tokens": int, "reasoning_tokens": int }`
-
-### `GET /usage/{tenant_id}`
-
-Current-period usage rollup against plan limits.
-
-Response:
+Deterministic for a given usage row:
 
 ```json
 {
   "tenant_id": 1,
-  "period_start": "2026-01-01T00:00:00Z",
-  "period_end": "2026-02-01T00:00:00Z",
+  "completion": "dummy completion",
+  "usage_event_id": 123,
+  "input_tokens": 100,
+  "cached_input_tokens": 0,
+  "output_tokens": 50,
+  "reasoning_tokens": 20
+}
+```
+
+`usage_event_id` is included so a caller can reconcile against the row.
+
+The response is serialised with `json.dumps(..., sort_keys=True)` on **both** the
+first delivery and every replay, using the same strategy as the stored
+`response_body`. The bytes the client first receives are therefore identical to
+the bytes a retry receives, and identical to what is persisted on the row. Key
+order is sorted for this reason; it carries no meaning in the contract.
+
+#### Authoritative order of operations
+
+Quota is checked **before** the insert. A rejected request therefore never
+leaves a row behind.
+
+1. Validate the request (`400` / `422`). No writes.
+2. Look up the idempotency key. If a committed row exists, replay it (below).
+3. Check the subscription. Not active -> **402**. No writes.
+4. Check the tenant's monthly quota. Over limit -> **429**. No writes.
+5. Insert exactly one `usage_events` row carrying the key.
+6. Set `response_body` and `response_status_code` on that row, then `commit()`
+   once.
+7. Return the stored body with the stored status.
+
+An earlier draft of this document specified insert-then-check-quota. That
+ordering is wrong for two reasons and has been removed: a 429 would leave an
+orphan row that counted against the very limit it just exceeded, and the
+rejected attempt would permanently consume its idempotency key.
+
+#### Rejected requests do not consume their key
+
+Because a 402 or 429 writes no row, the key is never recorded, and the rejected
+attempt consumes **neither quota nor the key**. A client that was rate limited
+may retry the **same** key later and succeed once eligible:
+
+- first attempt -> `429`, no row written, no quota consumed
+- tenant becomes eligible again
+- same key retried -> `200`, exactly one row
+
+There is no "failed usage event" row. Usage events mean "this was billed".
+
+`402` and `429` are deliberately distinct. A lapsed subscription is a billing
+state problem, not quota exhaustion, and the two are never conflated.
+
+#### Exact replay
+
+A repeat of a previously successful key returns the **stored** status code and
+the **stored** body — byte-identical JSON, including the original
+`usage_event_id`. No new row is created and no quota is consumed. This is why
+`response_status_code` exists alongside `response_body`: storing the body alone
+cannot reproduce the status.
+
+One row per successful billable request. A key that produced a `402` or `429`
+produced no row, so there is no "failed event" to replay.
+
+#### Concurrency
+
+Two distinct problems, two distinct mechanisms.
+
+**Double-metering a retried key.** The `UNIQUE` constraint on
+`usage_events.idempotency_key` is the authority. The pre-insert lookup in step 2
+is only a fast path that avoids raising an exception on the common sequential
+retry; correctness does not depend on it, because the `INSERT` still runs and
+still hits the constraint. An `IntegrityError` on that constraint is caught, the
+session is rolled back, and the winning request's committed row is read back and
+replayed. Both callers end up with the same response.
+
+**Quota overshoot.** A lookup-then-insert is a read-modify-write race, so steps
+4-6 are held under a process-wide lock. This is sufficient for the current
+architecture: one uvicorn process against SQLite, which serialises writers
+anyway. A multi-process or multi-worker deployment would need a real database
+lock (`SELECT ... FOR UPDATE`, or `BEGIN IMMEDIATE` on SQLite) instead of a
+Python lock. That is out of scope here and is called out as a known limit.
+
+### `GET /usage/{tenant_id}`
+
+Current **UTC calendar-month** usage against the tenant's plan limits. No
+pricing or cost — that is a later stage.
+
+The window is half-open: `[month_start, month_end)`, where `month_start` is
+`00:00:00` UTC on the 1st and `month_end` is `00:00:00` UTC on the 1st of the
+next month. An event stamped exactly at `month_start` counts; one stamped
+exactly at `month_end` does not. Server local time is never used.
+
+`tokens_used` is `input_tokens + cached_input_tokens + output_tokens +
+reasoning_tokens` summed over the window. A tenant with no events returns zero.
+
+```json
+{
+  "tenant_id": 1,
+  "month_start": "2026-01-01T00:00:00Z",
+  "month_end": "2026-02-01T00:00:00Z",
   "plan": "Free",
   "api_calls_used": 812,
   "api_calls_limit": 1000,
@@ -237,8 +370,8 @@ Behavior:
 
 1. Verify the `Stripe-Signature` header. Invalid signature returns `400` and
    nothing is written.
-2. Insert into `stripe_events` (`event_id`, `event_type`, `payload`).
-   On `UNIQUE(event_id)` conflict, return `200` immediately — this is a
+2. Insert into `stripe_events` (`stripe_event_id`, `event_type`, `payload`).
+   On `UNIQUE(stripe_event_id)` conflict, return `200` immediately — this is a
    duplicate delivery.
 3. Handle `checkout.session.completed`: set `tenants.stripe_customer_id`, create
    or update the `subscriptions` row, and move the tenant onto the purchased

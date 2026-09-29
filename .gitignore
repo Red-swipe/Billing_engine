@@ -20,6 +20,9 @@ venv/
 # Logs
 *.log
 
+# Local runtime artifacts from manual uvicorn launches
+server.pid
+
 # OS artifacts
 .DS_Store
 Thumbs.db
