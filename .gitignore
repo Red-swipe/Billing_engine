@@ -1,0 +1,25 @@
+# Environment / secrets
+.env
+
+# Python bytecode
+__pycache__/
+*.pyc
+
+# Virtualenvs
+.venv/
+
+# Local SQLite databases
+*.db
+
+# Test cache
+.pytest_cache/
+
+# Virtualenv alias (venv/ without dot)
+venv/
+
+# Logs
+*.log
+
+# OS artifacts
+.DS_Store
+Thumbs.db
