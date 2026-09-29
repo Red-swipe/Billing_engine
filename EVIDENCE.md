@@ -419,3 +419,86 @@ the repository contains placeholders only, so no live result is claimed.
 
 No `.env`, database, log, pid, cache, or secret file was staged in the Stage 3
 commit. The working tree was clean after commit creation.
+
+---
+
+## STAGE 4 — PRICING & COST EVIDENCE
+
+### 1. Pricing configuration
+
+The implemented exact rates are input `$0.00025 / 1k`, cached input
+`$0.000025 / 1k`, and output `$0.00075 / 1k`. Reasoning tokens are added to
+output tokens once and billed at the output rate. The cached-input value is the
+explicit example price selected from the brief's inconsistent cached-input
+wording. `calculate_cost` returns integer cents; it does not store floating
+point money.
+
+### 2–4. Calculator, rounding, and mixed-token evidence
+
+The Stage 4 unit tests cover zero, input-only, cached-input-only, output-only,
+reasoning-only, mixed usage, large usage, 1/999/1000/1001/1500-token
+quantities, invalid counts, and half-cent boundaries. The rounding tests prove
+half-up behavior: 33,333 output tokens costs 2.499975 cents and returns 2;
+33,334 costs 2.50005 cents and returns 3.
+
+### 5–6. Monthly cost endpoint and previous-month exclusion
+
+The endpoint test inserted current-month buckets of input=1,000, cached
+input=2,000, output=3,000, reasoning=4,000 plus a previous-month row of
+input=10,000,000. `GET /usage/{tenant_id}` returned `tokens_used=10000` and
+`cost_cents=1`, exactly matching the independent calculator result for the
+current-month row. The previous-month row was excluded. The usage-event count
+was 2 before and after the GET, proving the read-only property.
+
+### 7. Probe 5 — calculate_cost
+
+Controlled dataset:
+
+```text
+input=1000, cached_input=2000, output=3000, reasoning=4000
+```
+
+Independent calculation:
+
+```text
+(1000 × 0.00025 + 2000 × 0.000025 + (3000 + 4000) × 0.00075) / 1000 dollars
+= $0.00555 = 0.555 cents → 1 cent (half-up)
+```
+
+The API probe reported `cost_cents=1`; expected cents were `1`. Result: **PASS**.
+
+### 8. Final test result
+
+Executed with the repository virtual environment:
+
+```text
+.\venv\Scripts\python.exe -m pytest -q
+69 passed, 1 warning in 11.44s
+```
+
+The warning is the existing Starlette/httpx deprecation warning and does not
+affect test results. This includes all Stage 2 and Stage 3 regression tests.
+
+### 9. Fresh-clone verification
+
+A new clone of the Stage 4 tree was created at a disposable path. From that
+clone, `.env` was copied from `.env.example`, the declared requirements were
+available in the project virtual environment, and `seed.py` created a new
+database with Free and Pro plans plus the test tenant. The clone's own test
+suite was then run from the clone working directory:
+
+```text
+69 passed, 1 warning in 7.41s
+```
+
+The application was started from that clone and verified independently:
+
+```text
+GET /health -> {"status":"ok"}
+POST /generate with (1000, 2000, 3000, 4000) -> HTTP 200
+GET /usage/1 -> tokens_used=10000, cost_cents=1
+```
+
+Result: **PASS**. The warning is the existing Starlette/httpx deprecation
+warning. The disposable clone contained only ignored runtime files and was
+not part of the repository or commit.

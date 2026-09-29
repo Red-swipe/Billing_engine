@@ -163,7 +163,7 @@ rejected. The check is `used + requested > limit`, not `>=`.
 | `GET /usage/{tenant_id}` | Implemented (UTC calendar month) |
 | `GET /checkout/{tenant_id}` | Implemented; Stripe-configured checkout session creation. |
 | `POST /webhooks/stripe` | Implemented; raw-body verification and deduplicated sync. |
-| Pricing / cost calculation | **Not implemented.** `price_cents` exists on `plans`; no cost is computed or stored per request. |
+| Pricing / cost calculation | Implemented as deterministic `cost_cents` derived from usage events; no cost is stored per request. |
 | `stripe_events` table | Implemented unique event claim and processed marker. |
 | Subscription lifecycle webhooks | Implemented for updated/deleted events. |
 | Migrations | Alembic is a dependency but unused. Tables are created with `Base.metadata.create_all`. |
@@ -318,8 +318,8 @@ Python lock. That is out of scope here and is called out as a known limit.
 
 ### `GET /usage/{tenant_id}`
 
-Current **UTC calendar-month** usage against the tenant's plan limits. No
-pricing or cost — that is a later stage.
+Current **UTC calendar-month** usage against the tenant's plan limits, with
+deterministic cost in integer cents.
 
 The window is half-open: `[month_start, month_end)`, where `month_start` is
 `00:00:00` UTC on the 1st and `month_end` is `00:00:00` UTC on the 1st of the
@@ -328,6 +328,29 @@ exactly at `month_end` does not. Server local time is never used.
 
 `tokens_used` is `input_tokens + cached_input_tokens + output_tokens +
 reasoning_tokens` summed over the window. A tenant with no events returns zero.
+
+### Stage 4 pricing and cost
+
+The token rates are the Flyrank brief's explicit example rates:
+
+| Bucket | Rate per 1,000 tokens |
+|---|---:|
+| Input | $0.00025 |
+| Cached input | $0.000025 |
+| Output | $0.00075 |
+| Reasoning | billed at the output rate |
+
+The cached-input rate is deliberately `$0.000025 / 1k`, selected because it is
+the explicit example price in the brief where another section is inconsistent.
+`app.services.pricing.calculate_cost` uses exact `Decimal` rate constants and
+returns the authoritative result as integer `cost_cents`. Token quantities are
+not rounded before conversion from per-1,000 pricing. The final total is
+rounded to cents with `ROUND_HALF_UP`.
+
+`GET /usage/{tenant_id}` aggregates the four token columns from usage events in
+the UTC half-open window `[month_start, month_end)`, then calls
+`calculate_cost`. Usage events are the source of truth; cost is not persisted,
+so it cannot become stale or be double-counted.
 
 ```json
 {

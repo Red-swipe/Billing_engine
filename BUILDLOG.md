@@ -210,13 +210,29 @@ Verification: full pytest suite and fresh-clone setup were run for this stage;
 the exact results and any unavailable real-Stripe probe are recorded in
 EVIDENCE.md.
 
+## Stage 4 - Pricing and finalization
+
+Implemented deterministic token pricing in `app/services/pricing.py` using exact
+Decimal constants and integer-cent output. Input, cached-input, output, and
+reasoning buckets use the Flyrank brief rates; reasoning is billed once with
+output. Fractional 1,000-token quantities are preserved and the final value
+uses documented half-up cent rounding. `/usage/{tenant_id}` now derives
+`cost_cents` from current-month usage-event buckets without creating or
+modifying usage.
+
+Added 19 pricing, rounding, mixed-token, large-usage, monthly-window,
+read-only, and regression assertions. Probe 5 matched an independent expected
+cost of 1 cent for input=1,000, cached input=2,000, output=3,000, and
+reasoning=4,000. The full suite passed with 69 tests. Fresh-clone setup and
+cost verification are recorded in `EVIDENCE.md`; real Stripe test-mode
+verification remains unavailable without confirmed credentials/CLI.
+
 ## Not yet built
 
 - Stripe Checkout session creation
 - Stripe webhook receiver, signature verification, event deduplication
 - `subscription.updated` / `subscription.deleted` handling
-- Pricing and cost calculation
 - Alembic migrations
 
-These are designed in `DESIGN.md` and listed in `capstone.yaml` under
-`remaining`. Nothing in this repository claims they exist.
+Alembic migrations remain outside this capstone stage and are listed in
+`capstone.yaml` as the only remaining item.

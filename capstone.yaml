@@ -8,8 +8,8 @@ summary: >-
   Multi-tenant usage metering and billing engine for an AI SaaS product. Records
   one usage event per billable request, enforces per-plan monthly quota, and
   supports exactly-once accounting via client-supplied idempotency keys.
-stage: 3
-stage_name: Stripe integration
+stage: 4
+stage_name: Pricing and finalization
 status: complete
 
 runtime:
@@ -68,7 +68,8 @@ implemented:
   - id: usage-rollup
     description: >-
       GET /usage/{tenant_id} returns current UTC calendar-month usage against
-      plan limits. Half-open window [month_start, month_end). No pricing.
+      plan limits plus deterministic current-month cost_cents. Half-open window
+      [month_start, month_end); cost is derived from usage events.
     status: implemented
     file: app/routes/usage.py
 
@@ -77,7 +78,7 @@ implemented:
     status: implemented
     file: tests/test_stage_b.py
     command: pytest -q
-    expected: 50 passed
+    expected: 69 passed
 
 implemented:
   - id: stripe-checkout
@@ -100,20 +101,13 @@ implemented:
     design_ref: DESIGN.md
 
 not_implemented:
-
-  - id: pricing
-    description: >-
-      Cost calculation per request. price_cents exists on plans; no cost is
-      computed or stored per request. All money is integer cents.
-    status: design_only
-    design_ref: DESIGN.md
-
   - id: migrations
     description: Alembic migration history.
     status: not_started
 
 remaining: >-
-  Stage 4: pricing and cost calculation. See BUILDLOG.md.
+  Alembic migration history remains intentionally out of scope. Stage 4 is
+  complete; see BUILDLOG.md and EVIDENCE.md.
 
 data_model:
   tables:
@@ -137,7 +131,7 @@ data_model:
                 response_status_code, created_at]
       unique_constraints: [idempotency_key]
       note: >-
-        One row per request. No cost column at this stage. response_status_code
+        One row per request. Cost is derived, not persisted. response_status_code
         exists so a replay can return the original status as well as body.
     - name: stripe_events
       id_column: id
@@ -164,6 +158,10 @@ design_decisions:
       datetimes would silently break calendar-month range queries.
   - id: integer-cents
     summary: All money is integer cents. No floats anywhere.
+  - id: token-pricing
+    summary: >-
+      Input=$0.00025/1k, cached input=$0.000025/1k, output=$0.00075/1k;
+      reasoning is charged once at the output rate and final cents round half-up.
   - id: sorted-serialization
     summary: >-
       Responses are serialised with sort_keys=True on both the first delivery
@@ -191,9 +189,9 @@ environment:
     API calls and do not require real credentials.
 
 documents:
-  README.md: Project overview, setup, run, and API reference.
-  DESIGN.md: Schema, rationale, API contract, ordering and concurrency guarantees.
-  EVIDENCE.md: Raw Stage 2 probe output and test results.
+  README.md: Project overview, setup, run, API reference, and pricing.
+  DESIGN.md: Schema, pricing, rationale, API contract, ordering and concurrency guarantees.
+  EVIDENCE.md: Raw stage probe output and test results.
   BUILDLOG.md: Development progression by commit.
 
 tags:

@@ -5,8 +5,9 @@ records one usage event per billable request, enforces per-plan monthly quota,
 supports exactly-once accounting through client-supplied idempotency keys, and
 reports monthly usage rollups.
 
-This repository is at **Stage 3 (Stripe integration)**. Pricing and cost
-calculation remain intentionally out of scope for Stage 4.
+This repository is at **Stage 4 (pricing and finalization)**. Monthly usage
+cost is calculated deterministically from usage events and returned as integer
+cents.
 
 ## What it does
 
@@ -174,15 +175,15 @@ never consumed and can be retried later.
 
 ### `GET /usage/{tenant_id}`
 
-Current UTC calendar-month usage against plan limits. No pricing — that is a
-later stage.
+Current UTC calendar-month usage against plan limits, including deterministic
+cost derived from the four token buckets.
 
 ```bash
 curl http://127.0.0.1:8000/usage/2
 ```
 
 ```json
-{"tenant_id": 2, "month_start": "2026-09-01T00:00:00Z", "month_end": "2026-10-01T00:00:00Z", "plan": "Free", "api_calls_used": 3, "api_calls_limit": 1000, "tokens_used": 510, "tokens_limit": 100000}
+{"tenant_id": 2, "month_start": "2026-09-01T00:00:00Z", "month_end": "2026-10-01T00:00:00Z", "plan": "Free", "api_calls_used": 3, "api_calls_limit": 1000, "tokens_used": 10000, "tokens_limit": 100000, "cost_cents": 1}
 ```
 
 The window is half-open `[month_start, month_end)`. Server local time is never
@@ -257,10 +258,10 @@ credentials and the Stripe CLI.
 | Tenant creation, automatic Free subscription | Implemented |
 | `POST /generate` metering, idempotency, quota | Implemented |
 | `GET /usage/{tenant_id}` monthly rollup | Implemented |
-| Test suite (Stage 2 + Stage 3) | Implemented |
+| Test suite (Stages 2–4) | 69 passed |
 | `GET /checkout/{tenant_id}` | Implemented |
 | `POST /webhooks/stripe` | Implemented |
-| Pricing / cost calculation | **Not implemented** |
+| Pricing / monthly cost calculation | Implemented (`cost_cents`) |
 | `stripe_events` table and UNIQUE replay guard | Implemented |
 | Alembic migrations | Dependency present, unused; tables created via `create_all` |
 

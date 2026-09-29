@@ -3,17 +3,15 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Subscription, Tenant
-from app.services.quota import current_month_window, monthly_usage
+from app.services.pricing import calculate_cost
+from app.services.quota import current_month_window, monthly_token_usage, monthly_usage
 
 router = APIRouter(tags=["usage"])
 
 
 @router.get("/usage/{tenant_id}")
 def get_usage(tenant_id: int, db: Session = Depends(get_db)):
-    """Current UTC calendar-month usage against the tenant's plan limits.
-
-    No pricing or cost: that is a later stage.
-    """
+    """Current UTC calendar-month usage, limits, and derived cost."""
     tenant = db.get(Tenant, tenant_id)
     if tenant is None:
         raise HTTPException(
@@ -31,6 +29,7 @@ def get_usage(tenant_id: int, db: Session = Depends(get_db)):
 
     month_start, month_end = current_month_window()
     api_calls_used, tokens_used = monthly_usage(db, tenant_id)
+    token_buckets = monthly_token_usage(db, tenant_id, (month_start, month_end))
 
     return {
         "tenant_id": tenant_id,
@@ -41,4 +40,5 @@ def get_usage(tenant_id: int, db: Session = Depends(get_db)):
         "api_calls_limit": plan.api_calls_limit,
         "tokens_used": tokens_used,
         "tokens_limit": plan.tokens_limit,
+        "cost_cents": calculate_cost(*token_buckets),
     }

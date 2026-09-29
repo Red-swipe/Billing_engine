@@ -58,6 +58,30 @@ def monthly_usage(
     return int(api_calls), int(tokens)
 
 
+def monthly_token_usage(
+    db: Session, tenant_id: int, window: tuple[datetime, datetime] | None = None
+) -> tuple[int, int, int, int]:
+    """Return the four token buckets for the tenant's month."""
+    month_start, month_end = window or current_month_window()
+    stmt = select(
+        func.coalesce(func.sum(UsageEvent.input_tokens), 0),
+        func.coalesce(func.sum(UsageEvent.cached_input_tokens), 0),
+        func.coalesce(func.sum(UsageEvent.output_tokens), 0),
+        func.coalesce(func.sum(UsageEvent.reasoning_tokens), 0),
+    ).where(
+        UsageEvent.tenant_id == tenant_id,
+        UsageEvent.created_at >= month_start,
+        UsageEvent.created_at < month_end,
+    )
+    input_tokens, cached_input_tokens, output_tokens, reasoning_tokens = db.execute(stmt).one()
+    return (
+        int(input_tokens),
+        int(cached_input_tokens),
+        int(output_tokens),
+        int(reasoning_tokens),
+    )
+
+
 class QuotaExceeded(Exception):
     """Raised when a request would push the tenant past a plan limit.
 
