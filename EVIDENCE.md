@@ -301,3 +301,67 @@ duplicate idempotency keys: NONE
 
 The 1,005 rows are 999 pre-seeded boundary rows plus 6 probe rows. `stripe_events`
 is empty: the Stripe stage is not implemented.
+
+---
+
+## Fresh-clone verification (Stage 2.1)
+
+Run after adding `seed.py` to the repository, to confirm a fresh clone is usable
+without any file that existed only on the original machine. The repository was
+cloned into a clean directory, `.env` was created from `.env.example`, and a
+brand-new database was used. No local database, probe database, or untracked
+file was involved.
+
+```
+$ git clone --branch main <repo> clone_sim/Billing_engine
+clone exit: 0
+```
+
+Database initialization on a clean slate:
+
+```
+$ python seed.py
+Seeded plans [Free (1), Pro (2)] and tenant Test Tenant <test@example.com>
+seed exit: 0
+```
+
+Resulting schema and seed state, read from the new database:
+
+```
+tables: ['plans', 'stripe_events', 'subscriptions', 'tenants', 'usage_events']
+plans: [(1, 'Free', 1000, 100000, 0), (2, 'Pro', 50000, 5000000, 2000)]
+tenants: [(1, 'test@example.com', 1, 'active')]
+subscriptions: [(1, 1, 'active')]
+usage_events: 0
+stripe_events: 0
+```
+
+Server startup from the clone:
+
+```
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8002
+GET /health -> 200 {"status":"ok"}
+```
+
+Endpoint checks against the fresh clone:
+
+```
+POST /tenants
+HTTP/1.1 201 Created
+{"id":2,"name":"Clone Sim Tenant","email":"clonesim@example.com","plan":"Free","status":"active"}
+
+POST /generate
+X-Idempotency-Key: clonesim-key-001
+{"tenant_id": 2, "input_tokens": 100, "cached_input_tokens": 0, "output_tokens": 50, "reasoning_tokens": 20}
+HTTP/1.1 200 OK
+{"cached_input_tokens": 0, "completion": "dummy completion", "input_tokens": 100, "output_tokens": 50, "reasoning_tokens": 20, "tenant_id": 2, "usage_event_id": 1}
+
+GET /usage/2
+HTTP/1.1 200 OK
+{"tenant_id":2,"month_start":"2026-09-01T00:00:00Z","month_end":"2026-10-01T00:00:00Z","plan":"Free","api_calls_used":1,"api_calls_limit":1000,"tokens_used":170,"tokens_limit":100000}
+```
+
+`tokens_used` is 170 = 100 + 0 + 50 + 20, matching the request. A fresh clone
+can therefore install, configure, seed, start, create a tenant, meter a request
+and read usage using only committed files.

@@ -10,7 +10,6 @@ Using an explicit per-test directory under the system temp dir avoids that
 entirely and keeps the suite self-contained.
 """
 
-import os
 import tempfile
 import uuid
 from pathlib import Path

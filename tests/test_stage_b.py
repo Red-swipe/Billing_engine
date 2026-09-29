@@ -1,7 +1,6 @@
 """Stage B tests: /generate idempotency, quota, lapsed subscription, usage rollup."""
 
-import uuid
-from datetime import datetime, timedelta
+from datetime import timedelta
 
 import pytest
 from sqlalchemy import func, select
