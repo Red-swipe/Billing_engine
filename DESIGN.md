@@ -131,6 +131,7 @@ requiring a schema change.
 | `event_type` | str | NOT NULL | e.g. `checkout.session.completed` |
 | `payload` | text | NOT NULL | Raw JSON body as received |
 | `processed` | bool | NOT NULL, DEFAULT false | Set true after handlers succeed |
+| `processed_at` | datetime | NULLABLE | Set when a supported event is applied |
 | `created_at` | datetime | NOT NULL | |
 
 Stripe retries any webhook it does not receive a `2xx` for, so every event is
@@ -160,11 +161,11 @@ rejected. The check is `used + requested > limit`, not `>=`.
 | `POST /tenants` | Implemented (incl. automatic active Free subscription) |
 | `POST /generate` | Implemented (header idempotency, quota before insert, exact replay) |
 | `GET /usage/{tenant_id}` | Implemented (UTC calendar month) |
-| `GET /checkout/{tenant_id}` | **Not implemented.** Design only, below. |
-| `POST /webhooks/stripe` | **Not implemented.** Design only, below. |
+| `GET /checkout/{tenant_id}` | Implemented; Stripe-configured checkout session creation. |
+| `POST /webhooks/stripe` | Implemented; raw-body verification and deduplicated sync. |
 | Pricing / cost calculation | **Not implemented.** `price_cents` exists on `plans`; no cost is computed or stored per request. |
-| `stripe_events` table | Schema only. The table exists; no code writes to it. |
-| Subscription lifecycle webhooks | Not implemented. |
+| `stripe_events` table | Implemented unique event claim and processed marker. |
+| Subscription lifecycle webhooks | Implemented for updated/deleted events. |
 | Migrations | Alembic is a dependency but unused. Tables are created with `Base.metadata.create_all`. |
 
 ## API Surface
@@ -360,6 +361,40 @@ Response:
 The session is created in `mode=subscription` with
 `success_url={APP_BASE_URL}/` and
 `cancel_url={APP_BASE_URL}/?checkout=cancelled`.
+
+The endpoint is intentionally not an upgrade operation. It returns `404` for
+an unknown tenant, `503` when `STRIPE_SECRET_KEY` or `STRIPE_PRO_PRICE_ID` is
+missing, and `409` when the tenant already has an active Pro subscription.
+The first checkout creates a Stripe Customer and stores its ID on
+`tenants.stripe_customer_id`; subsequent requests reuse that ID. Session
+metadata and `client_reference_id` both contain the application tenant ID.
+
+### Stripe tenant mapping and webhook synchronization
+
+`checkout.session.completed` resolves the tenant from the application-written
+`metadata.tenant_id`, with `client_reference_id` and the persisted Stripe
+customer ID as controlled fallbacks. Subscription lifecycle events resolve via
+the persisted Stripe subscription ID first, then customer ID. Unresolvable
+events are acknowledged and recorded as unprocessed; no tenant is guessed.
+
+The webhook reads the raw request bytes and verifies them with Stripe's official
+signature helper before parsing or writing. It claims `stripe_events` using the
+unique `stripe_event_id` constraint before applying a handler, then commits the
+event row and local subscription change together. Invalid signatures return
+`400` and write nothing. A verified duplicate returns `200` with `result=duplicate`.
+
+Supported transitions are:
+
+- `checkout.session.completed`: Free -> Pro/active, storing customer and
+  subscription IDs.
+- `customer.subscription.updated`: synchronizes the local plan/status and
+  period boundaries using the known Stripe identifiers.
+- `customer.subscription.deleted`: keeps history and marks the local
+  subscription `canceled`, so `/generate` returns the existing Stage 2 `402`.
+
+Unknown valid event types are recorded as ignored without changing billing
+state. Stripe credentials are never returned by the API, and no local pricing
+engine is introduced.
 
 ### `POST /webhooks/stripe`
 

@@ -181,6 +181,35 @@ Results are recorded in EVIDENCE.md.
 
 ---
 
+## Stage 3 - Stripe integration
+
+Implementation:
+
+- Added environment-backed Stripe secret, webhook secret, Pro Price ID, and
+  `APP_BASE_URL` configuration.
+- Added `GET /checkout/{tenant_id}` with subscription-mode Checkout Sessions,
+  explicit Free/active-Pro behavior, metadata mapping, and reusable customer
+  persistence.
+- Added raw-body `POST /webhooks/stripe` with official signature verification,
+  database-backed unique event claiming, replay safety, and handlers for
+  checkout completion plus subscription update/deletion.
+- Added deterministic mocked Stripe tests covering configuration failures,
+  customer reuse, invalid tenants, signature failures, deduplication, all
+  supported events, unknown events, and Stage 2 regression behavior.
+
+Decisions and limitations:
+
+- Checkout does not upgrade local state; only a verified completion event does.
+- The application uses persisted tenant/customer/subscription identifiers and
+  never infers a tenant from arbitrary request values.
+- Automated tests do not need credentials. Real Stripe test-mode verification
+  is environment-dependent and is recorded separately in EVIDENCE.md.
+- Pricing, cost rollups, and Alembic migrations remain Stage 4/future work.
+
+Verification: full pytest suite and fresh-clone setup were run for this stage;
+the exact results and any unavailable real-Stripe probe are recorded in
+EVIDENCE.md.
+
 ## Not yet built
 
 - Stripe Checkout session creation

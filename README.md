@@ -5,8 +5,8 @@ records one usage event per billable request, enforces per-plan monthly quota,
 supports exactly-once accounting through client-supplied idempotency keys, and
 reports monthly usage rollups.
 
-This repository is at **Stage 2 (core billing logic)**. Stripe checkout and
-webhooks are designed but **not implemented** — see [Current Status](#current-status).
+This repository is at **Stage 3 (Stripe integration)**. Pricing and cost
+calculation remain intentionally out of scope for Stage 4.
 
 ## What it does
 
@@ -35,9 +35,12 @@ app/
     tenants.py         POST /tenants
     generate.py        POST /generate
     usage.py           GET /usage/{tenant_id}
+    checkout.py        GET /checkout/{tenant_id}
+    webhooks.py        POST /webhooks/stripe
   services/
     quota.py           UTC calendar-month window, aggregation, limit checks
     usage_service.py   The only writer of usage_events; locking and replay
+    stripe_service.py  Checkout, signature verification, and webhook sync
 seed.py                Idempotent database initialization
 tests/                 pytest suite
 ```
@@ -78,9 +81,18 @@ copy .env.example .env          # Windows
 # cp .env.example .env          # macOS / Linux
 ```
 
-`.env.example` ships with placeholder values that are safe to use for local
-development. For the current stage no Stripe value is required — Stripe code is
-not implemented yet.
+`.env.example` ships with safe placeholders. Stripe values are required only for
+the checkout and webhook paths; the automated suite mocks Stripe API calls and
+does not require real credentials.
+
+Required Stage 3 environment values:
+
+```text
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRO_PRICE_ID=
+APP_BASE_URL=http://localhost:8000
+```
 
 ## Database initialization
 
@@ -196,7 +208,7 @@ pytest -q
 ```
 
 ```
-27 passed
+50 passed
 ```
 
 The suite runs against a throwaway SQLite database per test, created under the
@@ -208,21 +220,35 @@ previous-month exclusion.
 
 Verified results are recorded in [EVIDENCE.md](EVIDENCE.md).
 
-## Stripe (not yet implemented)
+## Stripe integration
 
-`STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` are present in `.env.example`
-as placeholders because the Stage 3 design is settled and documented in
-[DESIGN.md](DESIGN.md), but **no Stripe code exists in this repository yet**.
-There is no checkout session creation, no webhook receiver, and no signature
-verification. The `stripe_events` table exists in the schema with a `UNIQUE`
-constraint on `stripe_event_id`, but nothing writes to it.
+`GET /checkout/{tenant_id}` creates a subscription-mode Checkout Session for a
+Free tenant using `STRIPE_PRO_PRICE_ID`. It creates one Stripe customer on the
+first request, persists the customer ID, and reuses it on later requests.
+`APP_BASE_URL` supplies the success and cancel redirect URLs. A tenant already
+on active Pro receives `409` and no new session is created. Checkout creation
+alone never upgrades the local plan; that happens after a verified webhook.
 
-When Stripe is implemented, setup will require:
+`POST /webhooks/stripe` verifies the raw request body with
+`STRIPE_WEBHOOK_SECRET`. Supported events are `checkout.session.completed`,
+`customer.subscription.updated`, and `customer.subscription.deleted`. The
+database UNIQUE constraint on `stripe_events.stripe_event_id` makes verified
+replays and concurrent duplicate deliveries safe.
 
-1. Real values for `STRIPE_SECRET_KEY` and `STRIPE_WEBHOOK_SECRET` in `.env`
-2. A `STRIPE_WEBHOOK_SECRET` obtained from `stripe listen` or the dashboard
-3. `APP_BASE_URL` matching the address the app is served from, used for Checkout
-   redirect URLs
+### Local Stripe test-mode workflow
+
+1. Set the four values above in `.env`, using a test secret and a recurring Pro
+   test Price ID from the same Stripe account.
+2. Run `python seed.py`, then start the API with `uvicorn app.main:app --reload`.
+3. If installed, run `stripe listen --forward-to localhost:8000/webhooks/stripe`.
+4. Put the CLI's printed `whsec_...` into `STRIPE_WEBHOOK_SECRET` and restart the
+   app. The CLI forwards signed events to the raw-body webhook endpoint.
+5. Create a tenant, open `/checkout/{tenant_id}`, complete Checkout in test
+   mode, and inspect `/usage/{tenant_id}` after `checkout.session.completed`.
+
+The normal pytest suite uses deterministic mocked Stripe API calls and genuine
+SDK-generated webhook signatures. A real Stripe probe requires local test-mode
+credentials and the Stripe CLI.
 
 ## Current Status
 
@@ -231,11 +257,11 @@ When Stripe is implemented, setup will require:
 | Tenant creation, automatic Free subscription | Implemented |
 | `POST /generate` metering, idempotency, quota | Implemented |
 | `GET /usage/{tenant_id}` monthly rollup | Implemented |
-| Test suite (27 tests) | Implemented |
-| `GET /checkout/{tenant_id}` | **Not implemented** — design only |
-| `POST /webhooks/stripe` | **Not implemented** — design only |
+| Test suite (Stage 2 + Stage 3) | Implemented |
+| `GET /checkout/{tenant_id}` | Implemented |
+| `POST /webhooks/stripe` | Implemented |
 | Pricing / cost calculation | **Not implemented** |
-| `stripe_events` table | Schema only, never written |
+| `stripe_events` table and UNIQUE replay guard | Implemented |
 | Alembic migrations | Dependency present, unused; tables created via `create_all` |
 
 ### Known limitation

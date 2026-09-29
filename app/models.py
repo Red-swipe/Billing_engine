@@ -104,4 +104,8 @@ class StripeEvent(Base):
     event_type: Mapped[str] = mapped_column(String(255), nullable=False)
     payload: Mapped[str] = mapped_column(Text, nullable=False)
     processed: Mapped[bool] = mapped_column(nullable=False, default=False)
+    # When the business operation for this event was applied. Distinguishes
+    # "received but failed" (processed=false) from "fully applied"
+    # (processed=true, processed_at set).
+    processed_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=utcnow)

@@ -8,9 +8,9 @@ summary: >-
   Multi-tenant usage metering and billing engine for an AI SaaS product. Records
   one usage event per billable request, enforces per-plan monthly quota, and
   supports exactly-once accounting via client-supplied idempotency keys.
-stage: 2
-stage_name: core billing logic
-status: in_progress
+stage: 3
+stage_name: Stripe integration
+status: complete
 
 runtime:
   language: python
@@ -77,12 +77,12 @@ implemented:
     status: implemented
     file: tests/test_stage_b.py
     command: pytest -q
-    expected: 27 passed
+    expected: 50 passed
 
-not_implemented:
+implemented:
   - id: stripe-checkout
     description: GET /checkout/{tenant_id} — Stripe Checkout session creation.
-    status: design_only
+    status: implemented
     design_ref: DESIGN.md
     required_env: [STRIPE_SECRET_KEY]
 
@@ -90,14 +90,16 @@ not_implemented:
     description: >-
       POST /webhooks/stripe — raw-body receiver with signature verification and
       event deduplication on stripe_events.stripe_event_id.
-    status: design_only
+    status: implemented
     design_ref: DESIGN.md
     required_env: [STRIPE_WEBHOOK_SECRET]
 
   - id: stripe-subscription-lifecycle
     description: Handling of subscription.updated and subscription.deleted.
-    status: design_only
+    status: implemented
     design_ref: DESIGN.md
+
+not_implemented:
 
   - id: pricing
     description: >-
@@ -111,7 +113,7 @@ not_implemented:
     status: not_started
 
 remaining: >-
-  Stage 3: Stripe checkout and webhooks, then pricing. See BUILDLOG.md.
+  Stage 4: pricing and cost calculation. See BUILDLOG.md.
 
 data_model:
   tables:
@@ -139,9 +141,9 @@ data_model:
         exists so a replay can return the original status as well as body.
     - name: stripe_events
       id_column: id
-      columns: [id, stripe_event_id, event_type, payload, processed, created_at]
+      columns: [id, stripe_event_id, event_type, payload, processed, processed_at, created_at]
       unique_constraints: [stripe_event_id]
-      note: Schema only. No code writes to this table.
+      note: Verified events are claimed and marked processed atomically with local state.
 
 design_decisions:
   - id: one-row-per-request
@@ -179,14 +181,14 @@ concurrency:
     database lock (SELECT ... FOR UPDATE, or BEGIN IMMEDIATE on SQLite).
 
 environment:
-  required: []
-  optional: [DATABASE_URL, APP_BASE_URL, STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET]
+  required: [STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PRO_PRICE_ID, APP_BASE_URL]
+  optional: [DATABASE_URL]
   defaults:
     DATABASE_URL: sqlite:///./billing.db
     APP_BASE_URL: http://localhost:8000
   note: >-
-    No Stripe value is needed at Stage 2 because no Stripe code exists yet.
-    Placeholders in .env.example are safe.
+    Stripe placeholders in .env.example are safe. Automated tests mock Stripe
+    API calls and do not require real credentials.
 
 documents:
   README.md: Project overview, setup, run, and API reference.

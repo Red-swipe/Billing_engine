@@ -102,6 +102,49 @@ def session(db_engine):
         yield s
 
 
+def _install_settings(monkeypatch, **overrides):
+    """Install a modified copy of the app settings into every module that reads it.
+
+    `settings` is a frozen dataclass instance, so it cannot be mutated in place.
+    Modules do `from app.config import settings`, binding the object directly, so
+    patching `app.config.settings` alone would not reach them. We therefore
+    rebind the name in each consumer module. monkeypatch reverts all of it.
+    """
+    from dataclasses import replace
+
+    from app import config as config_module
+    from app.routes import checkout as checkout_module
+    from app.services import stripe_service as stripe_module
+
+    new_settings = replace(config_module.settings, **overrides)
+    for module in (stripe_module, checkout_module):
+        monkeypatch.setattr(module, "settings", new_settings, raising=False)
+    return new_settings
+
+
+@pytest.fixture
+def stripe_settings(monkeypatch):
+    """Fake-but-well-formed Stripe test values.
+
+    No network call is made with these: Stripe API calls are mocked in the
+    Stage 3 tests, so the suite needs no real credentials and no network.
+    """
+    return _install_settings(
+        monkeypatch,
+        STRIPE_SECRET_KEY="sk_test_FAKE_FOR_UNIT_TESTS",
+        STRIPE_WEBHOOK_SECRET="whsec_FAKE_FOR_UNIT_TESTS",
+        STRIPE_PRO_PRICE_ID="price_FAKE_FOR_UNIT_TESTS",
+    )
+
+
+@pytest.fixture
+def no_stripe_config(monkeypatch):
+    """Settings with no Stripe credentials, to exercise the unconfigured path."""
+    return _install_settings(
+        monkeypatch, STRIPE_SECRET_KEY="", STRIPE_WEBHOOK_SECRET="", STRIPE_PRO_PRICE_ID=""
+    )
+
+
 def make_tenant(client, name="Test", email=None):
     """Create a tenant through the real API so its subscription is real."""
     email = email or f"{uuid.uuid4().hex}@example.com"
