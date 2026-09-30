@@ -166,7 +166,7 @@ rejected. The check is `used + requested > limit`, not `>=`.
 | Pricing / cost calculation | Implemented as deterministic `cost_cents` derived from usage events; no cost is stored per request. |
 | `stripe_events` table | Implemented unique event claim and processed marker. |
 | Subscription lifecycle webhooks | Implemented for updated/deleted events. |
-| Migrations | Alembic is a dependency but unused. Tables are created with `Base.metadata.create_all`. |
+| Migrations | Alembic owns schema creation and evolution. Run `alembic upgrade head` before application startup; seed data remains separate. |
 
 ## API Surface
 

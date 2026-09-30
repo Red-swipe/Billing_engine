@@ -40,7 +40,7 @@ and cross-tenant access returns `403`.
 
 ```
 app/
-  main.py              FastAPI app; create_all on startup; router registration
+  main.py              FastAPI app; Alembic-owned startup; router registration
   config.py            Settings loaded from .env via python-dotenv
   database.py          Declarative Base, engine, SessionLocal, get_db dependency
   models.py            SQLAlchemy models: Plan, Tenant, Subscription,
@@ -110,9 +110,15 @@ APP_BASE_URL=http://localhost:8000
 
 ## Database initialization
 
-Tables are created by SQLAlchemy at application startup (`create_all` in the
-FastAPI lifespan). Plans are **not** created automatically, so seed once before
-first use:
+Alembic migrations are the schema source of truth. Create or upgrade the
+database before starting the application:
+
+```bash
+alembic upgrade head
+```
+
+Plans and the development tenant are **not** created by migrations. Seed them
+separately once before first use:
 
 ```bash
 python seed.py
@@ -277,22 +283,23 @@ credentials and the Stripe CLI.
 | Tenant creation, automatic Free subscription | Implemented |
 | `POST /generate` metering, idempotency, quota | Implemented |
 | `GET /usage/{tenant_id}` monthly rollup | Implemented |
-| Test suite (Stages 2-5) | 80 passed |
+| Test suite (Stages 2-6) | 82 passed |
 | `GET /checkout/{tenant_id}` | Implemented; API-key protected |
 | `POST /webhooks/stripe` | Implemented |
 | Background usage-cost reconciliation | Implemented with bounded retries and failure alert |
 | Pricing / monthly cost calculation | Implemented (`cost_cents`) |
 | `stripe_events` table and UNIQUE replay guard | Implemented |
-| Alembic migrations | Dependency present, unused; tables created via `create_all` |
+| Alembic migrations | Implemented; schema created and evolved through `alembic upgrade head` |
 
 ### Tenant API-key authentication
 
 `POST /generate`, `GET /usage/{tenant_id}`, and `GET /checkout/{tenant_id}`
 require `X-API-Key`. Cross-tenant body and URL IDs are rejected. The Stripe
 webhook is intentionally excluded and remains signature-authenticated. This
-repository has no Alembic history, so an existing database requires the same
-manual schema-management process already documented for the `create_all`
-limitation.
+repository includes a baseline Alembic migration for the current schema. A
+database created by the earlier `create_all`-only version should be backed up
+and migrated or recreated explicitly; no historical Alembic revision exists
+for an automated upgrade from that pre-Alembic schema.
 
 ### Known limitation
 

@@ -1,7 +1,7 @@
 # Section 6 Acceptance Evidence
 
 This document is an examiner-facing acceptance checklist for the current
-repository. The current full regression result is **80 passed**. Claims below
+repository. The current full regression result is **82 passed**. Claims below
 are limited to committed implementation, automated tests, and the recorded
 real Stripe test-mode probe.
 
@@ -15,12 +15,32 @@ real Stripe test-mode probe.
 | Cross-tenant `/generate` rejected | PASS | `tests/test_auth.py::test_generate_cannot_cross_tenant_boundary` |
 | Cross-tenant checkout rejected | PASS | `tests/test_auth.py::test_checkout_cannot_cross_tenant_boundary` |
 | Webhook remains independently authenticated | PASS | `tests/test_auth.py::test_webhook_remains_signature_authenticated_only` |
-| Full regression | PASS | `80 passed` |
+| Full regression | PASS | `82 passed` |
 
 Tenant API keys are stored only as SHA-256 hashes. Isolation tests use different
-tenant IDs and different API keys. Existing databases retain the repository's
-pre-existing migration limitation: this project uses `create_all` and has no
-Alembic history.
+tenant IDs and different API keys.
+
+### Database Persistence / Alembic Migration Evidence
+
+- Migration chain exists: **PASS** — `alembic/versions/20260930_0001_initial_schema.py`
+  is the current baseline and `alembic heads` resolves to `20260930_0001`.
+- Fresh database created through Alembic: **PASS** —
+  `tests/test_migrations.py::test_fresh_database_is_created_by_alembic_and_has_required_schema`
+  runs `alembic upgrade head` against an isolated empty SQLite database.
+- Required tables and columns verified: **PASS** — the test inspects `plans`,
+  `tenants`, `subscriptions`, `usage_events`, and `stripe_events`, including
+  `usage_events.response_status_code` and `stripe_events.processed_at`.
+- Required index verified: **PASS** — the test verifies
+  `ix_usage_events_tenant_created_at` contains `(tenant_id, created_at)` in
+  that order.
+- Application compatibility: **PASS** —
+  `tests/test_migrations.py::test_application_can_use_schema_created_by_alembic`
+  creates a tenant through the API using the migrated database.
+- Historical existing-schema upgrade: **NOT PROVEN** — the repository had no
+  genuine pre-Alembic revision or migration snapshot. The baseline is honest
+  about that limitation; existing databases from the prior `create_all`-only
+  implementation may require explicit recreation or manual migration.
+- Full regression after migration work: **PASS** — `82 passed`.
 
 ## Section 6 Checklist
 
@@ -44,7 +64,7 @@ Alembic history.
 | 16. Idempotency | PASS | Metering replay tests and Stripe replay tests listed above | Client-supplied X-Idempotency-Key makes metering replay the original status/body; Stripe event IDs make webhook processing exactly-once. |
 | 17. Secrets hygiene | PASS | app/config.py; checkout secret-response test; repository history/status checks | Stripe credentials are loaded from environment variables, the secret key is not returned by checkout, and runtime secret/database/log files were not staged in the checkpoint commits. |
 | 18. Background job with retries/failure alert | PASS | `tests/test_background_jobs.py`; `app/services/background_jobs.py` | Usage-cost reconciliation is scheduled with FastAPI BackgroundTasks, retries are bounded/configurable, and one structured alert is emitted only after final failure. |
-| 19. Schema migrations | NOT IMPLEMENTED | app/main.py; requirements.txt; DESIGN.md | Alembic is listed as a dependency but unused. Startup uses Base.metadata.create_all; no migration history exists. |
+| 19. Schema migrations | PASS with historical limitation | `alembic.ini`; `alembic/env.py`; `alembic/versions/20260930_0001_initial_schema.py`; `tests/test_migrations.py` | Fresh schema and application compatibility are verified through Alembic. No genuine pre-Alembic revision exists, so an upgrade from the old `create_all`-only schema is not claimed. |
 
 ## Real Stripe Evidence
 

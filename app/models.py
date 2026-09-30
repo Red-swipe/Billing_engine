@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 
-from sqlalchemy import ForeignKey, String, Text, UniqueConstraint
+from sqlalchemy import ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.database import Base
@@ -72,6 +72,7 @@ class UsageEvent(Base):
     __tablename__ = "usage_events"
     __table_args__ = (
         UniqueConstraint("idempotency_key", name="uq_usage_events_idempotency_key"),
+        Index("ix_usage_events_tenant_created_at", "tenant_id", "created_at"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True)

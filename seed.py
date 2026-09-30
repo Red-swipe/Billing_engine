@@ -5,7 +5,7 @@ Usage: python seed.py
 
 from sqlalchemy import select
 
-from app.database import Base, SessionLocal, engine
+from app.database import SessionLocal
 from app.models import Plan, Subscription, Tenant
 from app.auth import hash_api_key
 
@@ -36,8 +36,6 @@ TEST_API_KEY = "test-tenant-api-key"
 
 
 def seed() -> None:
-    Base.metadata.create_all(engine)
-
     with SessionLocal() as db:
         for spec in PLANS:
             plan = db.get(Plan, spec["id"])

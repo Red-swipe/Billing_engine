@@ -33,6 +33,25 @@ stage. Only work that actually happened is recorded here.
 
 ---
 
+## Item 6 - Alembic schema migrations
+
+The original implementation listed Alembic as a dependency but had no
+configuration or migration history; FastAPI startup and `seed.py` used
+`Base.metadata.create_all`. Implemented a minimal baseline migration for the
+five current tables, including `usage_events.response_status_code`,
+`stripe_events.processed_at`, the existing uniqueness/foreign-key constraints,
+and the required `ix_usage_events_tenant_created_at` index. Production startup
+now requires `alembic upgrade head`, while test fixtures remain isolated and
+may use `create_all` directly.
+
+Fresh isolated SQLite migration verification passed, including table, column,
+and composite-index inspection. The migrated schema also passed an API tenant
+creation compatibility test. No historical Alembic revision existed, so an
+upgrade from the old `create_all`-only database was not fabricated or claimed;
+that remains the only migration-specific examiner limitation.
+
+---
+
 ## Phase 1 — Design and project setup
 
 **Commit `38559ca`** — "Phase 1: design doc and project setup"
@@ -232,7 +251,8 @@ Decisions and limitations:
   never infers a tenant from arbitrary request values.
 - Automated tests do not need credentials. Real Stripe test-mode verification
   is environment-dependent and is recorded separately in EVIDENCE.md.
-- Pricing, cost rollups, and Alembic migrations remain Stage 4/future work.
+- Pricing, cost rollups, and Alembic migrations were still future work at this
+  historical Stage 3 checkpoint; later entries record their implementation.
 
 Verification: full pytest suite and fresh-clone setup were run for this stage;
 the exact results and any unavailable real-Stripe probe are recorded in
@@ -265,10 +285,10 @@ and Stage 4 below subsequently implemented Stripe integration and pricing.
   event deduplication were not yet built.
 - At that checkpoint, `subscription.updated` / `subscription.deleted` handling
   was not yet built.
-- Alembic migrations
+- Alembic migrations were not yet implemented at that checkpoint.
 
-Alembic migrations remain outside this capstone stage and are listed in
-`capstone.yaml` as the only remaining item.
+That historical snapshot preceded Item 6; the current Item 6 entry above
+records the migration implementation and verification.
 
 ## 2026-09-30 - Real Stripe verification checkpoint
 

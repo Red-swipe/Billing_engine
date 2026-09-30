@@ -2,14 +2,13 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
-from app.database import Base, engine
 from app.routes import checkout, generate, tenants, usage, webhooks
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Alembic is deliberately skipped for now; see DESIGN.md.
-    Base.metadata.create_all(engine)
+    # Schema creation and evolution are owned by Alembic. Run
+    # `alembic upgrade head` before starting the application.
     yield
 
 
