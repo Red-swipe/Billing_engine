@@ -1,564 +1,169 @@
-# Stage 2 Evidence — Core Billing Logic
+# Section 6 Acceptance Evidence
 
-All values below are raw output from the Stage B verification runs. Nothing is
-paraphrased or invented. Where a probe used direct database setup to establish a
-pre-boundary state, that is stated explicitly.
+This document is an examiner-facing acceptance checklist for the current
+repository. The current full regression result is **70 passed**. Claims below
+are limited to committed implementation, automated tests, and the recorded
+real Stripe test-mode probe.
 
-Environment: Windows, Python 3.11.15, `venv/`, SQLite. Server under test:
-uvicorn on `127.0.0.1:8001`, verified with `GET /health` → `200 {"status":"ok"}`.
+## Section 6 Checklist
 
----
-
-## Probe 1 — Normal generation
-
-Create a tenant on the Free plan:
-
-```
-POST /tenants
-{"name": "Final Tenant", "email": "final@stageb.example.com"}
-
-HTTP/1.1 201 Created
-{"id":2,"name":"Final Tenant","email":"final@stageb.example.com","plan":"Free","status":"active"}
-```
-
-The tenant is returned with an active Free subscription created in the same
-transaction, so it can generate immediately.
-
-Send a metered request:
-
-```
-POST /generate
-X-Idempotency-Key: final-stageb-key-001
-Content-Type: application/json
-
-{
-  "tenant_id": 2,
-  "input_tokens": 100,
-  "cached_input_tokens": 0,
-  "output_tokens": 50,
-  "reasoning_tokens": 20
-}
-
-HTTP/1.1 200 OK
-{"cached_input_tokens": 0, "completion": "dummy completion", "input_tokens": 100, "output_tokens": 50, "reasoning_tokens": 20, "tenant_id": 2, "usage_event_id": 1}
-```
-
-Observed values:
-
-| Field | Value |
-|---|---|
-| `tenant_id` | 2 |
-| `usage_event_id` | 1 |
-| `input_tokens` | 100 |
-| `cached_input_tokens` | 0 |
-| `output_tokens` | 50 |
-| `reasoning_tokens` | 20 |
-
-Usage row count **0 → 1**.
-
-Persisted state of that row, read directly from SQLite:
-
-```
-stored response_status_code: 200
-stored response_body: {"cached_input_tokens": 0, "completion": "dummy completion", "input_tokens": 100, "output_tokens": 50, "reasoning_tokens": 20, "tenant_id": 2, "usage_event_id": 1}
-```
-
-The row, the status code and the body are written in a single transaction, which
-is what makes faithful replay possible.
-
----
-
-## Probe 2 — Idempotency
-
-The identical request was sent again with the identical key
-`X-Idempotency-Key: final-stageb-key-001`.
-
-```
-HTTP/1.1 200 OK
-{"cached_input_tokens": 0, "completion": "dummy completion", "input_tokens": 100, "output_tokens": 50, "reasoning_tokens": 20, "tenant_id": 2, "usage_event_id": 1}
-```
-
-Byte comparison of the first response and the replay:
-
-```
-len1=163 sha1=D9CB3BD5E84A8D80E44C2BA1B0E56250067B69CBB33D35AFB559348121226558
-len2=163 sha2=D9CB3BD5E84A8D80E44C2BA1B0E56250067B69CBB33D35AFB559348121226558
-BYTE EQUAL: True
-```
-
-| Check | Result |
-|---|---|
-| First request status | 200 |
-| Replay status | 200 |
-| `len1` / `len2` | 163 / 163 |
-| SHA-256 first | `D9CB3BD5...226558` |
-| SHA-256 replay | `D9CB3BD5...226558` |
-| Byte equality | **True** |
-| `usage_event_id` first | 1 |
-| `usage_event_id` replay | 1 |
-| Usage row count | 1 |
-| Rows for that key | 1 |
-
-The first response is also byte-identical to the persisted `response_body`
-string, so what the client receives initially is exactly what a retry receives.
-
-A different key with an otherwise identical body produced a separate event
-(`usage_event_id` 2) and took the count to 2 — one row per key, no collapse.
-
-### Serialization fix
-
-An earlier run of this probe found a real defect: the first response used
-dict-insertion key order while the replay used `sort_keys=True`, so the two
-differed in key order even though values matched. The route now serialises with
-the same `json.dumps(..., sort_keys=True)` strategy used for the stored body, for
-both the fresh and the replayed path. Two dedicated tests were added and pass:
-
-- `test_first_and_replay_response_bytes_are_identical` — asserts
-  `first.content == second.content`
-- `test_first_response_matches_stored_body_exactly` — asserts the wire bytes
-  equal the persisted `response_body`
-
----
-
-## Probe 3 — API quota boundary
-
-A dedicated tenant was created with 999 pre-existing `usage_events` rows, each
-`api_calls = 1`, inserted directly into SQLite to establish the pre-boundary
-state. No application code was modified.
-
-```
-=== PROBE C1: 999 existing + 1 request -> must SUCCEED at exactly 1000 ===
-HTTP/1.1 200 OK
-{"tenant_id":10,"completion":"dummy completion","usage_event_id":1002,"input_tokens":0,"cached_input_tokens":0,"output_tokens":0,"reasoning_tokens":0}
-
-=== PROBE C2: 1000 existing + new key -> must be 429 ===
-HTTP/1.1 429 Too Many Requests
-{"detail":{"error":"quota_exceeded","message":"Tenant has exceeded its plan limit for api_calls. Used 1000 of 1000 this month; this request needs 1 more.","limit_type":"api_calls","used":1000,"limit":1000,"requested":1}}
-```
-
-| Check | Result |
-|---|---|
-| 999 + 1 | 200 (succeeds) |
-| 1000 + 1 | 429 (rejected) |
-| Rows created by rejected request | **0** |
-| Resulting monthly `api_calls` | 1000 |
-
-The boundary is inclusive at the limit: a tenant at exactly 1,000 calls is
-allowed its last call; the next is refused. The check is
-`used + requested > limit`.
-
----
-
-## Probe 4 — Token quota boundary
-
-A fresh tenant with zero prior usage sent a request for exactly the Free token
-limit, then one token more.
-
-```
-=== PROBE C3: exactly 100000 tokens -> must SUCCEED ===
-HTTP/1.1 200 OK
-{"tenant_id":11,"completion":"dummy completion","usage_event_id":1003,"input_tokens":100000,"cached_input_tokens":0,"output_tokens":0,"reasoning_tokens":0}
-
-=== PROBE C4: 100001 tokens (one beyond) -> must be 429 ===
-HTTP/1.1 429 Too Many Requests
-{"detail":{"error":"quota_exceeded","message":"Tenant has exceeded its plan limit for tokens. Used 100000 of 100000 this month; this request needs 100001 more.","limit_type":"tokens","used":100000,"limit":100000,"requested":100001}}
-```
-
-| Check | Result |
-|---|---|
-| Exactly 100,000 tokens | 200 (succeeds) |
-| 100,001 tokens | 429 (rejected) |
-| Rows created by rejected request | **0** |
-| Resulting token usage | 100,000 |
-
-The `tokens` total is `input_tokens + cached_input_tokens + output_tokens +
-reasoning_tokens`; `cached_input_tokens` counts toward the limit.
-
----
-
-## Probe 5 — Inactive subscription
-
-A separate tenant was created, then its subscription status was set to
-`inactive` by direct database setup.
-
-```
-=== subscription state ===
-[(12, 1, 'inactive')]
-
-POST /generate
-X-Idempotency-Key: probeD-lapsed-0001
-{"tenant_id": 12, "input_tokens": 10, "cached_input_tokens": 0, "output_tokens": 5, "reasoning_tokens": 0}
-
-HTTP/1.1 402 Payment Required
-{"detail":{"error":"subscription_inactive","message":"Tenant 12 has no active subscription. Billing is required before generating.","subscription_status":"inactive"}}
-```
-
-| Check | Result |
-|---|---|
-| Subscription status | `inactive` |
-| Status | **402** |
-| Error code | `subscription_inactive` |
-| Usage rows for that tenant | **0** |
-| Rows for `probeD-lapsed-0001` | **0** |
-
-402 is distinct from 429: a lapsed subscription is a billing state problem, not
-quota exhaustion. A test asserts the two are not conflated, by sending a
-deliberately over-quota request to a lapsed tenant and requiring 402 rather than
-429.
-
-Because no row is written, the rejected key is never recorded and remains
-retryable once the tenant is eligible again. Test
-`test_rejected_request_does_not_consume_its_key` covers the 429 case explicitly:
-the key is absent from the table after rejection and succeeds on retry.
-
----
-
-## Probe 6 — Monthly usage
-
-A previous-month row was inserted directly for tenant 2, then the rollup was
-read.
-
-```
-GET /usage/2
-HTTP/1.1 200 OK
-{"tenant_id":2,"month_start":"2026-09-01T00:00:00Z","month_end":"2026-10-01T00:00:00Z","plan":"Free","api_calls_used":3,"api_calls_limit":1000,"tokens_used":510,"tokens_limit":100000}
-```
-
-Ground truth read from SQLite for the same window:
-
-```
-month_start: 2026-09-01 00:00:00   month_end (exclusive): 2026-10-01 00:00:00
-IN-WINDOW  (rows, api_calls, tokens): (3, 3, 510)
-BEFORE window (excluded rows):        (1, 50, 5000)
-```
-
-Rows for tenant 2, in full:
-
-```
-(1005, 'probeE-OLD-MONTH',  50, 5000, 0,  0,  0, '2026-08-31 23:59:59')
-(   1, 'probeA-key-0001',    1,  100, 0, 50, 20, '2026-09-29 15:21:23')
-(   2, 'probeB-key-0002',    1,  100, 0, 50, 20, '2026-09-29 15:21:41')
-(1004, 'probeE-key-0003',    1,  100, 0, 50, 20, '2026-09-29 15:24:05')
-```
-
-| Field | API | DB ground truth | Match |
+| Requirement | Status | Evidence / Test | Observed result |
 |---|---|---|---|
-| `api_calls_used` | 3 | 3 | yes |
-| `api_calls_limit` | 1000 | 1000 (Free) | yes |
-| `tokens_used` | 510 | 510 | yes |
-| `tokens_limit` | 100000 | 100000 (Free) | yes |
+| 1. One usage event per action, deduped by key | PASS | test_generate_creates_exactly_one_usage_event; test_same_key_twice_returns_identical_response_and_one_row; test_concurrent_identical_keys_create_exactly_one_event | One successful action creates one usage_events row. Replays return the stored result and do not add a row. |
+| 2. Quota checked before action | PASS | test_api_quota_boundary_at_limit; test_token_quota_boundary_at_limit; app/services/usage_service.py | Quota is checked before insert. Rejected requests create zero usage rows and leave the rejected key retryable. |
+| 3. 429 / 402 clear error responses | PARTIAL | test_api_quota_boundary_at_limit; test_inactive_subscription_is_402_and_creates_no_event; test_402_is_distinct_from_429; app/routes/generate.py | 429 and 402 return structured JSON with distinct error codes and messages. No Retry-After header is implemented on 429, so header-based retry guidance is incomplete. |
+| 4. Monthly usage rolls into cost | PARTIAL | test_usage_reports_monthly_cost_and_excludes_previous_month; GET /usage/{tenant_id} implementation | Monthly token usage is rolled into integer cost_cents, with previous-month rows excluded. API-call pricing is not included in cost_cents. |
+| 5. Token pricing rules | PASS | tests/test_stage_d.py: test_calculate_cost_exact_rates_and_fractional_units, test_calculate_cost_mixed_and_reasoning_is_not_double_counted, test_calculate_cost_rounds_half_up | Input is $0.00025/1k, cached input is $0.000025/1k, output is $0.00075/1k; reasoning is charged once at the output rate; results are integer cents rounded half-up. |
+| 6. Pricing pinned in configuration | PARTIAL | app/services/pricing.py; app/config.py; pricing tests | Rates are centralized as constants in app/services/pricing.py, but they are not configuration values in app/config.py. |
+| 7. Checkout works end-to-end in Stripe test mode | PASS | Recorded real Stripe test-mode probe; Stripe CLI forwarding evidence | Real Stripe Checkout completed successfully for Tenant 2 in test mode. |
+| 8. Webhooks verify signatures | PASS | Real forged-signature probe; test_forged_signature_returns_400_and_writes_nothing; test_signature_from_wrong_secret_is_rejected | Forged signature returned HTTP 400 and changed no database state. |
+| 9. Webhooks deduplicate events | PASS | Real replay probe; test_replay_same_event_twice_processes_once; test_duplicate_delivery_does_not_reapply_business_operation | Replays returned HTTP 200 duplicate. Exactly one stripe_events row existed and no duplicate subscription was created. |
+| 10. Webhooks update the subscription/plan | PASS | Real checkout.session.completed probe; test_checkout_session_completed_upgrades_to_pro; test_subscription_updated_syncs_state; test_subscription_deleted_marks_inactive_and_blocks_generate | The real completed-checkout event changed Tenant 2 to Pro with an active subscription. customer.subscription.updated was not observed during the real checkout probe; lifecycle behavior is covered by automated tests. |
+| 11. Real persistence | PASS | SQLite models/database; fresh-clone evidence; real Stripe probe | Plans, tenants, usage events, Stripe events, customers, and subscriptions persist in SQLite across requests. |
+| 12. Tenant data isolation | PARTIAL | test_unknown_tenant_is_404; test_usage_follows_tenant_subscription_relationship_when_ids_diverge; test_webhook_cannot_upgrade_a_different_tenant | Foreign-key relationships and webhook tenant matching are tested, but API routes accept tenant_id directly and there is no tenant authentication. Full caller-level isolation is not implemented. |
+| 13. Required database/index behavior | PASS | app/models.py; test_concurrent_identical_keys_create_exactly_one_event; SQLite schema evidence | Primary keys, foreign keys, unique email/customer/event/idempotency constraints, and indexes for tenant/event timestamps are present. |
+| 14. Layered architecture | PASS | app/routes, app/services, app/models.py, app/database.py | FastAPI routes handle transport/validation, services handle metering/pricing/Stripe logic, and SQLAlchemy models/database handle persistence. |
+| 15. Validation / clean 4xx responses | PASS | test_invalid_payloads_rejected_without_creating_events; test_unknown_tenant_is_404; checkout/webhook negative-path tests | Invalid payloads are rejected without usage rows; unknown tenants return 404; inactive subscriptions return 402; quota exhaustion returns 429; invalid webhook signatures return 400. |
+| 16. Idempotency | PASS | Metering replay tests and Stripe replay tests listed above | Client-supplied X-Idempotency-Key makes metering replay the original status/body; Stripe event IDs make webhook processing exactly-once. |
+| 17. Secrets hygiene | PASS | app/config.py; checkout secret-response test; repository history/status checks | Stripe credentials are loaded from environment variables, the secret key is not returned by checkout, and runtime secret/database/log files were not staged in the checkpoint commits. |
+| 18. Background job with retries/failure alert | NOT IMPLEMENTED | Repository search and implementation inspection | No background job, retry worker, or failure-alert mechanism is implemented. |
+| 19. Schema migrations | NOT IMPLEMENTED | app/main.py; requirements.txt; DESIGN.md | Alembic is listed as a dependency but unused. Startup uses Base.metadata.create_all; no migration history exists. |
 
-The row stamped `2026-08-31 23:59:59` — one second before `month_start` — is
-excluded. The window is half-open `[month_start, month_end)`, so an event at
-exactly `month_start` is included and one at exactly `month_end` is not. A test
-covers both boundary instants. Server local time is never used; all timestamps
-are naive UTC.
+## Real Stripe Evidence
 
----
+Recorded from the real Stripe test-mode checkout and webhook probe:
 
-## Test suite
-
-```
-$ pytest -q
-...........................                                              [100%]
-27 passed, 1 warning in 4.46s
-exit code: 0
-```
-
-One warning is a `StarletteDeprecationWarning` from FastAPI's `TestClient`
-about `httpx` usage; it is upstream and does not affect results.
-
-Coverage of the required scenarios:
-
-| # | Scenario | Test(s) |
-|---|---|---|
-| 1 | Normal generation, one row | `test_generate_creates_exactly_one_usage_event` |
-| 2 | Same key twice, identical response, one row | `test_same_key_twice_returns_identical_response_and_one_row`, `test_replay_does_not_increment_usage`, `test_first_and_replay_response_bytes_are_identical`, `test_first_response_matches_stored_body_exactly` |
-| 3 | Different keys, two events | `test_different_keys_create_two_events` |
-| 4 | Missing idempotency key → 400 | `test_missing_idempotency_key_is_400_and_creates_nothing`, `test_blank_idempotency_key_is_400` |
-| 5 | API quota boundary | `test_api_quota_boundary_at_limit` |
-| 6 | Token quota boundary | `test_token_quota_boundary_at_limit` |
-| 7 | Rejected key not consumed | `test_rejected_request_does_not_consume_its_key` |
-| 8 | Lapsed subscription → 402 | `test_inactive_subscription_is_402_and_creates_no_event`, `test_canceled_subscription_is_402`, `test_402_is_distinct_from_429` |
-| 9 | Usage rollup, all four buckets | `test_usage_rollup_aggregates_all_four_token_buckets`, `test_usage_for_tenant_with_no_events_is_zero`, `test_usage_window_boundaries_are_utc_month` |
-| 10 | Previous month excluded | `test_previous_month_events_are_excluded`, `test_exact_month_start_is_included` |
-| 11 | Concurrent duplicate keys | `test_concurrent_identical_keys_create_exactly_one_event` (8 threads, one row, identical bodies) |
-| 13 | Validation | `test_invalid_payloads_rejected_without_creating_events` (6 cases), `test_unknown_tenant_is_404` |
-
----
-
-## Aggregate database state after the probe suite
-
-```
-  tenants        5
-  plans          2
-  subscriptions  5
-  usage_events   1005
-  stripe_events  0
-
-duplicate idempotency keys: NONE
-```
-
-The 1,005 rows are 999 pre-seeded boundary rows plus 6 probe rows. `stripe_events`
-is empty: the Stripe stage is not implemented.
-
----
-
-## Fresh-clone verification (Stage 2.1)
-
-Run after adding `seed.py` to the repository, to confirm a fresh clone is usable
-without any file that existed only on the original machine. The repository was
-cloned into a clean directory, `.env` was created from `.env.example`, and a
-brand-new database was used. No local database, probe database, or untracked
-file was involved.
-
-```
-$ git clone --branch main <repo> clone_sim/Billing_engine
-clone exit: 0
-```
-
-Database initialization on a clean slate:
-
-```
-$ python seed.py
-Seeded plans [Free (1), Pro (2)] and tenant Test Tenant <test@example.com>
-seed exit: 0
-```
-
-Resulting schema and seed state, read from the new database:
-
-```
-tables: ['plans', 'stripe_events', 'subscriptions', 'tenants', 'usage_events']
-plans: [(1, 'Free', 1000, 100000, 0), (2, 'Pro', 50000, 5000000, 2000)]
-tenants: [(1, 'test@example.com', 1, 'active')]
-subscriptions: [(1, 1, 'active')]
-usage_events: 0
-stripe_events: 0
-```
-
-Server startup from the clone:
-
-```
-INFO:     Application startup complete.
-INFO:     Uvicorn running on http://127.0.0.1:8002
-GET /health -> 200 {"status":"ok"}
-```
-
-Endpoint checks against the fresh clone:
-
-```
-POST /tenants
-HTTP/1.1 201 Created
-{"id":2,"name":"Clone Sim Tenant","email":"clonesim@example.com","plan":"Free","status":"active"}
-
-POST /generate
-X-Idempotency-Key: clonesim-key-001
-{"tenant_id": 2, "input_tokens": 100, "cached_input_tokens": 0, "output_tokens": 50, "reasoning_tokens": 20}
-HTTP/1.1 200 OK
-{"cached_input_tokens": 0, "completion": "dummy completion", "input_tokens": 100, "output_tokens": 50, "reasoning_tokens": 20, "tenant_id": 2, "usage_event_id": 1}
-
-GET /usage/2
-HTTP/1.1 200 OK
-{"tenant_id":2,"month_start":"2026-09-01T00:00:00Z","month_end":"2026-10-01T00:00:00Z","plan":"Free","api_calls_used":1,"api_calls_limit":1000,"tokens_used":170,"tokens_limit":100000}
-```
-
-`tokens_used` is 170 = 100 + 0 + 50 + 20, matching the request. A fresh clone
-can therefore install, configure, seed, start, create a tenant, meter a request
-and read usage using only committed files.
-
----
-
-## STAGE 3 — STRIPE EVIDENCE
-
-### Automated Stripe and regression tests
-
-Executed from the committed Stage 3 tree with the project virtual environment:
-
-```
-$ .\\venv\\Scripts\\python.exe -m pytest -q
-50 passed, 1 warning in 76.82s
-```
-
-The suite includes mocked Checkout API calls and SDK-generated valid webhook
-signatures, plus invalid/tampered signatures, customer reuse, missing
-configuration, unknown tenants/events, checkout completion, subscription
-updates/deletion, database-backed duplicate delivery, and the existing Stage 2
-metering tests. No real Stripe API call was made by pytest.
-
-### Fresh-clone verification
-
-The committed `main` tree was cloned to a new directory. The command sequence
-created `.env` from `.env.example`, ran `pip install -r requirements.txt`, and
-ran `seed.py` successfully:
-
-```
-Seeded plans [Free (1), Pro (2)] and tenant Test Tenant <test@example.com>
-```
-
-The clone's full suite then passed:
-
-```
-50 passed, 1 warning in 89.41s
-```
-
-A temporary uvicorn process from the clone was started and terminated after the
-finite probe:
-
-```
-GET /health -> 200 {"status":"ok"}
-```
-
-### Real Stripe test-mode probe
-
-```
-Automated/mock Stripe tests: PASS
-Real Stripe test-mode probe: PASS
-Test date: 2026-09-30
+~~~text
+Real Stripe Checkout: PASS
+Payment completed: YES
 Tenant: 2
 Price: £10.00 GBP/month
-Checkout session: complete; payment_status=paid; mode=subscription
-checkout.session.completed: evt_1ULQ2iCSRoP1ezLYuediQy1r
+checkout.session.completed: PASS
+Real event ID: evt_1ULQ2iCSRoP1ezLYuediQy1r
 Webhook response: HTTP 200
-Tenant plan after webhook: Pro
+Stripe customer persisted: YES
+Subscription persisted: YES
+Plan: Pro
 Subscription status: active
-GET /usage/2: HTTP 200; plan=Pro; api_calls_used=0; tokens_used=0
-```
+GET /usage/2: HTTP 200
+~~~
 
-The Checkout Session was created in Stripe test mode and completed with the
-standard test card. Stripe persisted customer `cus_VM8EwJsjby4lHs` and
-subscription `sub_1ULQ2hCSRoP1ezLY4r4kGEKi` for tenant 2. The live Stripe CLI
-observed `checkout.session.completed` and forwarded it to the application;
-`customer.subscription.updated` was not observed during this probe.
+The live Stripe CLI observed checkout.session.completed and forwarded it to
+POST /webhooks/stripe. customer.subscription.updated was not observed during
+this real checkout probe; it is covered by automated tests only.
 
-### Forged Webhook
+### Forged Signature
 
-The exact stored payload for `evt_1ULQ2iCSRoP1ezLYuediQy1r` was sent to the
-real `POST /webhooks/stripe` endpoint with an intentionally invalid signature:
+~~~text
+HTTP 400: PASS
+Database unchanged: PASS
+~~~
 
-```text
-HTTP 400
-{"error":"invalid_signature","message":"No signatures found matching the expected signature for payload"}
-DB event count before=1; after=1
-Event row for evt_1ULQ2iCSRoP1ezLYuediQy1r before=1; after=1
-Tenant/subscription state changed: NO
-```
-
-The forged request was rejected before signature verification could mutate any
-database state.
+The exact stored payload for the real event was sent with an intentionally
+invalid signature. The event count and Tenant 2 subscription/plan state were
+unchanged.
 
 ### Replay / Deduplication
 
-The exact raw payload stored for the real event was replayed twice with a valid
-signature for the active Stripe listener:
+~~~text
+Original live delivery: processed
+Replay: HTTP 200 duplicate
+Exactly one stripe_events row: PASS
+Duplicate subscription: NO
+~~~
 
-```text
-first delivery  -> HTTP 200, result=duplicate
-second delivery -> HTTP 200, result=duplicate
-stripe_events rows for evt_1ULQ2iCSRoP1ezLYuediQy1r: 1
-total stripe_events rows: 1
-tenant 2: plan_id=2, status=active
-subscription tenant_id=2: plan_id=2, status=active,
-  stripe_subscription_id=sub_1ULQ2hCSRoP1ezLY4r4kGEKi
-```
+The original live delivery processed the checkout event. Subsequent exact
+replays were acknowledged as duplicates, left one stripe_events row, and did
+not create a second subscription.
 
-The original live delivery was the processed delivery (`HTTP 200`), and both
-subsequent exact replays were acknowledged as duplicates. No duplicate
-subscription or second `stripe_events` row was created.
+### Post-checkout Redirect Note
 
-### Redirect Note
+After successful payment and webhook processing, Stripe redirected to:
 
-After successful Stripe payment and webhook processing, Stripe redirected to:
-
-```text
+~~~text
 http://localhost:8000/
-```
+~~~
 
-The root path is not an implemented API route, so it returned HTTP 404
-(`{"detail":"Not Found"}`). This occurred after payment completion and after
-the webhook had already upgraded tenant 2 to Pro.
+The root route is not implemented, so it returned HTTP 404. This happened
+after successful payment and after the webhook had upgraded Tenant 2 to Pro; it
+did not prevent checkout completion or subscription persistence.
 
-No `.env`, database, log, pid, cache, or secret file was staged in the Stage 3
-commit. The working tree was clean after commit creation.
+## Acceptance Probes
 
----
+### Probe 1 - Idempotency
 
-## STAGE 4 — PRICING & COST EVIDENCE
+The same X-Idempotency-Key was submitted twice to POST /generate. Both
+responses were HTTP 200 with identical response bytes and the same
+usage_event_id; exactly one usage row existed. Evidence:
+test_same_key_twice_returns_identical_response_and_one_row,
+test_first_and_replay_response_bytes_are_identical, and
+test_first_response_matches_stored_body_exactly.
 
-### 1. Pricing configuration
+### Probe 2 - Quota Boundary
 
-The implemented exact rates are input `$0.00025 / 1k`, cached input
-`$0.000025 / 1k`, and output `$0.00075 / 1k`. Reasoning tokens are added to
-output tokens once and billed at the output rate. The cached-input value is the
-explicit example price selected from the brief's inconsistent cached-input
-wording. `calculate_cost` returns integer cents; it does not store floating
-point money.
+The API-call boundary probe established the following observed behavior:
 
-### 2–4. Calculator, rounding, and mixed-token evidence
+~~~text
+999 existing calls + 1 request: HTTP 200
+1000 existing calls + 1 request: HTTP 429
+Rejected request creates zero usage rows: PASS
+~~~
 
-The Stage 4 unit tests cover zero, input-only, cached-input-only, output-only,
-reasoning-only, mixed usage, large usage, 1/999/1000/1001/1500-token
-quantities, invalid counts, and half-cent boundaries. The rounding tests prove
-half-up behavior: 33,333 output tokens costs 2.499975 cents and returns 2;
-33,334 costs 2.50005 cents and returns 3.
+The same boundary behavior is covered by test_api_quota_boundary_at_limit.
+Token quota behavior is covered by test_token_quota_boundary_at_limit.
 
-### 5–6. Monthly cost endpoint and previous-month exclusion
+### Probe 3 - Real Stripe
 
-The endpoint test inserted current-month buckets of input=1,000, cached
-input=2,000, output=3,000, reasoning=4,000 plus a previous-month row of
-input=10,000,000. `GET /usage/{tenant_id}` returned `tokens_used=10000` and
-`cost_cents=1`, exactly matching the independent calculator result for the
-current-month row. The previous-month row was excluded. The usage-event count
-was 2 before and after the GET, proving the read-only property.
+Free Tenant 2 used real Stripe test-mode Checkout, completed payment, received
+checkout.session.completed, and was updated to an active Pro subscription.
+The persisted customer and subscription were confirmed, and GET /usage/2
+returned HTTP 200 with plan Pro.
 
-### 7. Probe 5 — calculate_cost
+### Probe 4 - Webhook Security
 
-Controlled dataset:
+An intentionally forged signature returned HTTP 400 with the database
+unchanged. The valid real event was replayed and returned HTTP 200 duplicate.
+Exactly one stripe_events row remained and no duplicate subscription was
+created.
 
-```text
-input=1000, cached_input=2000, output=3000, reasoning=4000
-```
+## Architecture Flow
 
-Independent calculation:
+~~~text
+Client
+  ↓
+API route
+  ↓
+Validation
+  ↓
+Quota check
+  ↓
+Usage service
+  ↓
+Usage event
+  ↓
+Monthly rollup / cost
+~~~
 
-```text
-(1000 × 0.00025 + 2000 × 0.000025 + (3000 + 4000) × 0.00075) / 1000 dollars
-= $0.00555 = 0.555 cents → 1 cent (half-up)
-```
+~~~text
+Stripe Checkout
+  ↓
+Stripe event
+  ↓
+Signature verification
+  ↓
+Event deduplication
+  ↓
+Subscription update
+  ↓
+Tenant plan
+~~~
 
-The API probe reported `cost_cents=1`; expected cents were `1`. Result: **PASS**.
+## Current Regression
 
-### 8. Final test result
+~~~text
+.\\venv\\Scripts\\python.exe -m pytest -q
+70 passed
+~~~
 
-Executed with the repository virtual environment:
-
-```text
-.\venv\Scripts\python.exe -m pytest -q
-69 passed, 1 warning in 11.44s
-```
-
-The warning is the existing Starlette/httpx deprecation warning and does not
-affect test results. This includes all Stage 2 and Stage 3 regression tests.
-
-### 9. Fresh-clone verification
-
-A new clone of the Stage 4 tree was created at a disposable path. From that
-clone, `.env` was copied from `.env.example`, the declared requirements were
-available in the project virtual environment, and `seed.py` created a new
-database with Free and Pro plans plus the test tenant. The clone's own test
-suite was then run from the clone working directory:
-
-```text
-69 passed, 1 warning in 7.41s
-```
-
-The application was started from that clone and verified independently:
-
-```text
-GET /health -> {"status":"ok"}
-POST /generate with (1000, 2000, 3000, 4000) -> HTTP 200
-GET /usage/1 -> tokens_used=10000, cost_cents=1
-```
-
-Result: **PASS**. The warning is the existing Starlette/httpx deprecation
-warning. The disposable clone contained only ignored runtime files and was
-not part of the repository or commit.
+The suite completes with one existing Starlette/httpx deprecation warning.
+The warning does not affect the result.
