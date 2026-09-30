@@ -15,6 +15,7 @@ class Settings:
     STRIPE_WEBHOOK_SECRET: str
     STRIPE_PRO_PRICE_ID: str
     APP_BASE_URL: str
+    BACKGROUND_JOB_MAX_ATTEMPTS: int = 3
 
     @property
     def stripe_configured(self) -> bool:
@@ -37,4 +38,5 @@ settings = Settings(
     STRIPE_WEBHOOK_SECRET=os.getenv("STRIPE_WEBHOOK_SECRET", ""),
     STRIPE_PRO_PRICE_ID=os.getenv("STRIPE_PRO_PRICE_ID", ""),
     APP_BASE_URL=os.getenv("APP_BASE_URL", "http://localhost:8000"),
+    BACKGROUND_JOB_MAX_ATTEMPTS=int(os.getenv("BACKGROUND_JOB_MAX_ATTEMPTS", "3")),
 )

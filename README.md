@@ -5,6 +5,14 @@ records one usage event per billable request, enforces per-plan monthly quota,
 supports exactly-once accounting through client-supplied idempotency keys, and
 reports monthly usage rollups.
 
+After a fresh successful `POST /generate`, FastAPI schedules a read-only usage
+cost reconciliation job after the response path. It retries transient failures
+up to `BACKGROUND_JOB_MAX_ATTEMPTS` (default `3`). A permanently failing job
+stops after the final attempt and emits one structured `ERROR` log containing
+the job name, job identifier, attempt count, and failure reason. This is an
+in-process background task, not production-grade distributed queue
+infrastructure.
+
 This repository is at **Stage 4 (pricing and finalization)**. Monthly usage
 cost is calculated deterministically from usage events and returned as integer
 cents.
@@ -269,9 +277,10 @@ credentials and the Stripe CLI.
 | Tenant creation, automatic Free subscription | Implemented |
 | `POST /generate` metering, idempotency, quota | Implemented |
 | `GET /usage/{tenant_id}` monthly rollup | Implemented |
-| Test suite (Stages 2-4) | 75 passed |
+| Test suite (Stages 2-5) | 80 passed |
 | `GET /checkout/{tenant_id}` | Implemented; API-key protected |
 | `POST /webhooks/stripe` | Implemented |
+| Background usage-cost reconciliation | Implemented with bounded retries and failure alert |
 | Pricing / monthly cost calculation | Implemented (`cost_cents`) |
 | `stripe_events` table and UNIQUE replay guard | Implemented |
 | Alembic migrations | Dependency present, unused; tables created via `create_all` |

@@ -1,7 +1,7 @@
 # Section 6 Acceptance Evidence
 
 This document is an examiner-facing acceptance checklist for the current
-repository. The current full regression result is **75 passed**. Claims below
+repository. The current full regression result is **80 passed**. Claims below
 are limited to committed implementation, automated tests, and the recorded
 real Stripe test-mode probe.
 
@@ -15,7 +15,7 @@ real Stripe test-mode probe.
 | Cross-tenant `/generate` rejected | PASS | `tests/test_auth.py::test_generate_cannot_cross_tenant_boundary` |
 | Cross-tenant checkout rejected | PASS | `tests/test_auth.py::test_checkout_cannot_cross_tenant_boundary` |
 | Webhook remains independently authenticated | PASS | `tests/test_auth.py::test_webhook_remains_signature_authenticated_only` |
-| Full regression | PASS | `75 passed` |
+| Full regression | PASS | `80 passed` |
 
 Tenant API keys are stored only as SHA-256 hashes. Isolation tests use different
 tenant IDs and different API keys. Existing databases retain the repository's
@@ -37,13 +37,13 @@ Alembic history.
 | 9. Webhooks deduplicate events | PASS | Real replay probe; test_replay_same_event_twice_processes_once; test_duplicate_delivery_does_not_reapply_business_operation | Replays returned HTTP 200 duplicate. Exactly one stripe_events row existed and no duplicate subscription was created. |
 | 10. Webhooks update the subscription/plan | PASS | Real checkout.session.completed probe; test_checkout_session_completed_upgrades_to_pro; test_subscription_updated_syncs_state; test_subscription_deleted_marks_inactive_and_blocks_generate | The real completed-checkout event changed Tenant 2 to Pro with an active subscription. customer.subscription.updated was not observed during the real checkout probe; lifecycle behavior is covered by automated tests. |
 | 11. Real persistence | PASS | SQLite models/database; fresh-clone evidence; real Stripe probe | Plans, tenants, usage events, Stripe events, customers, and subscriptions persist in SQLite across requests. |
-| 12. Tenant data isolation | PARTIAL | test_unknown_tenant_is_404; test_usage_follows_tenant_subscription_relationship_when_ids_diverge; test_webhook_cannot_upgrade_a_different_tenant | Foreign-key relationships and webhook tenant matching are tested, but API routes accept tenant_id directly and there is no tenant authentication. Full caller-level isolation is not implemented. |
+| 12. Tenant data isolation | PASS | `tests/test_auth.py`; `app/auth.py`; protected generate/usage/checkout routes | Tenant API keys are hashed, authenticated tenants are authoritative, and cross-tenant body/URL access is rejected. |
 | 13. Required database/index behavior | PASS | app/models.py; test_concurrent_identical_keys_create_exactly_one_event; SQLite schema evidence | Primary keys, foreign keys, unique email/customer/event/idempotency constraints, and indexes for tenant/event timestamps are present. |
 | 14. Layered architecture | PASS | app/routes, app/services, app/models.py, app/database.py | FastAPI routes handle transport/validation, services handle metering/pricing/Stripe logic, and SQLAlchemy models/database handle persistence. |
 | 15. Validation / clean 4xx responses | PASS | test_invalid_payloads_rejected_without_creating_events; test_unknown_tenant_is_404; checkout/webhook negative-path tests | Invalid payloads are rejected without usage rows; unknown tenants return 404; inactive subscriptions return 402; quota exhaustion returns 429; invalid webhook signatures return 400. |
 | 16. Idempotency | PASS | Metering replay tests and Stripe replay tests listed above | Client-supplied X-Idempotency-Key makes metering replay the original status/body; Stripe event IDs make webhook processing exactly-once. |
 | 17. Secrets hygiene | PASS | app/config.py; checkout secret-response test; repository history/status checks | Stripe credentials are loaded from environment variables, the secret key is not returned by checkout, and runtime secret/database/log files were not staged in the checkpoint commits. |
-| 18. Background job with retries/failure alert | NOT IMPLEMENTED | Repository search and implementation inspection | No background job, retry worker, or failure-alert mechanism is implemented. |
+| 18. Background job with retries/failure alert | PASS | `tests/test_background_jobs.py`; `app/services/background_jobs.py` | Usage-cost reconciliation is scheduled with FastAPI BackgroundTasks, retries are bounded/configurable, and one structured alert is emitted only after final failure. |
 | 19. Schema migrations | NOT IMPLEMENTED | app/main.py; requirements.txt; DESIGN.md | Alembic is listed as a dependency but unused. Startup uses Base.metadata.create_all; no migration history exists. |
 
 ## Real Stripe Evidence

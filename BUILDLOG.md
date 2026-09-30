@@ -1,5 +1,19 @@
 # Build Log
 
+## Item 5 - Background job, retries, and failure alert
+
+The examiner required an asynchronous billing operation with bounded retries
+and an observable final-failure alert. The smallest fit was a read-only usage
+cost reconciliation scheduled after a fresh successful `/generate` event using
+FastAPI `BackgroundTasks`; it cannot create usage rows, change quotas, or alter
+Stripe state. The default retry limit is three attempts and is configurable via
+`BACKGROUND_JOB_MAX_ATTEMPTS`.
+
+Focused tests prove scheduling/execution, no retry after success, transient
+failure recovery, bounded permanent failure, exactly one alert, useful alert
+metadata, and alert timing after the final attempt. No implementation mistake
+occurred during this change. The full suite passed with 80 tests.
+
 ## Item 4 - Tenant API-key isolation
 
 The original API accepted `tenant_id` from `POST /generate` and allowed

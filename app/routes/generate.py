@@ -1,6 +1,6 @@
 import json
 
-from fastapi import APIRouter, Depends, Header, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, status
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -10,6 +10,7 @@ from app.auth import get_current_tenant
 from app.models import Tenant
 from app.services.usage_service import SubscriptionInactive, meter_request
 from app.services.quota import QuotaExceeded
+from app.services.background_jobs import schedule_usage_reconciliation
 
 router = APIRouter(tags=["generate"])
 
@@ -41,6 +42,7 @@ class GenerateRequest(BaseModel):
 @router.post("/generate")
 def generate(
     payload: GenerateRequest,
+    background_tasks: BackgroundTasks,
     x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
     db: Session = Depends(get_db),
     tenant: Tenant = Depends(get_current_tenant),
@@ -93,6 +95,18 @@ def generate(
     # A returned tuple would be serialised as a JSON array, so build the
     # Response explicitly rather than returning (body, status).
     payload = json.dumps(result.body, sort_keys=True)
+    if not result.replayed and background_tasks is not None:
+        schedule_usage_reconciliation(
+            background_tasks,
+            tenant.id,
+            result.body["usage_event_id"],
+            {
+                "input_tokens": result.body["input_tokens"],
+                "cached_input_tokens": result.body["cached_input_tokens"],
+                "output_tokens": result.body["output_tokens"],
+                "reasoning_tokens": result.body["reasoning_tokens"],
+            },
+        )
     return Response(
         content=payload,
         status_code=result.status_code,
