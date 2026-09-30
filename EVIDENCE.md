@@ -1,9 +1,26 @@
 # Section 6 Acceptance Evidence
 
 This document is an examiner-facing acceptance checklist for the current
-repository. The current full regression result is **70 passed**. Claims below
+repository. The current full regression result is **75 passed**. Claims below
 are limited to committed implementation, automated tests, and the recorded
 real Stripe test-mode probe.
+
+## Item 4 acceptance - tenant API-key isolation
+
+| Check | Result | Evidence |
+|---|---|---|
+| Missing and invalid keys rejected | PASS | `tests/test_auth.py::test_missing_and_invalid_api_keys_are_rejected` |
+| Valid key succeeds | PASS | `tests/test_auth.py::test_valid_key_succeeds_and_usage_is_isolated` |
+| Cross-tenant `/usage` rejected | PASS | Same test uses two tenants and two keys |
+| Cross-tenant `/generate` rejected | PASS | `tests/test_auth.py::test_generate_cannot_cross_tenant_boundary` |
+| Cross-tenant checkout rejected | PASS | `tests/test_auth.py::test_checkout_cannot_cross_tenant_boundary` |
+| Webhook remains independently authenticated | PASS | `tests/test_auth.py::test_webhook_remains_signature_authenticated_only` |
+| Full regression | PASS | `75 passed` |
+
+Tenant API keys are stored only as SHA-256 hashes. Isolation tests use different
+tenant IDs and different API keys. Existing databases retain the repository's
+pre-existing migration limitation: this project uses `create_all` and has no
+Alembic history.
 
 ## Section 6 Checklist
 

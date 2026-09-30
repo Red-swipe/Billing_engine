@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.auth import get_current_tenant
 from app.models import Subscription, Tenant
 from app.services.pricing import calculate_cost
 from app.services.quota import current_month_window, monthly_token_usage, monthly_usage
@@ -10,13 +11,16 @@ router = APIRouter(tags=["usage"])
 
 
 @router.get("/usage/{tenant_id}")
-def get_usage(tenant_id: int, db: Session = Depends(get_db)):
+def get_usage(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
+):
     """Current UTC calendar-month usage, limits, and derived cost."""
-    tenant = db.get(Tenant, tenant_id)
-    if tenant is None:
+    if tenant_id != tenant.id:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"tenant {tenant_id} does not exist",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API key does not belong to the requested tenant",
         )
 
     subscription = tenant.subscription

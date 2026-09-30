@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.auth import get_current_tenant
 from app.models import Tenant
 from app.services.usage_service import SubscriptionInactive, meter_request
 from app.services.quota import QuotaExceeded
@@ -42,6 +43,7 @@ def generate(
     payload: GenerateRequest,
     x_idempotency_key: str | None = Header(default=None, alias="X-Idempotency-Key"),
     db: Session = Depends(get_db),
+    tenant: Tenant = Depends(get_current_tenant),
 ):
     # The key is client supplied and mandatory. We never synthesise one: a
     # server-generated key cannot make a retry idempotent, which is the entire
@@ -52,16 +54,16 @@ def generate(
             detail="X-Idempotency-Key header is required",
         )
 
-    if db.get(Tenant, payload.tenant_id) is None:
+    if payload.tenant_id != tenant.id:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"tenant {payload.tenant_id} does not exist",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API key does not belong to the requested tenant",
         )
 
     try:
         result = meter_request(
             db=db,
-            tenant_id=payload.tenant_id,
+            tenant_id=tenant.id,
             idempotency_key=x_idempotency_key,
             counts=payload.counts(),
         )

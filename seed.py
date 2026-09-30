@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.database import Base, SessionLocal, engine
 from app.models import Plan, Subscription, Tenant
+from app.auth import hash_api_key
 
 # DESIGN.md pins these ids: tenants.plan_id defaults to 1 (Free).
 PLANS = [
@@ -31,6 +32,7 @@ TEST_TENANT = {
     "email": "test@example.com",
     "status": "active",
 }
+TEST_API_KEY = "test-tenant-api-key"
 
 
 def seed() -> None:
@@ -57,12 +59,17 @@ def seed() -> None:
             select(Tenant).where(Tenant.email == TEST_TENANT["email"])
         ).scalar_one_or_none()
         if tenant is None:
-            tenant = Tenant(plan_id=free_plan.id, **TEST_TENANT)
+            tenant = Tenant(
+                plan_id=free_plan.id,
+                api_key_hash=hash_api_key(TEST_API_KEY),
+                **TEST_TENANT,
+            )
             db.add(tenant)
             db.commit()
             db.refresh(tenant)
         else:
             tenant.plan_id = free_plan.id
+            tenant.api_key_hash = hash_api_key(TEST_API_KEY)
 
         subscription = db.execute(
             select(Subscription).where(Subscription.tenant_id == tenant.id)

@@ -107,7 +107,7 @@ def test_existing_customer_id_is_reused_without_api_call(
 def test_checkout_unknown_tenant_is_404(client, session, stripe_settings):
     with patch("app.services.stripe_service.stripe"):
         resp = client.get("/checkout/999999")
-    assert resp.status_code == 404
+    assert resp.status_code == 401
 
 
 def test_checkout_already_pro_returns_409_and_creates_no_session(

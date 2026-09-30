@@ -5,6 +5,7 @@ from datetime import timedelta
 import pytest
 
 from app.models import Subscription, Tenant, UsageEvent
+from app.auth import hash_api_key
 from app.services.pricing import calculate_cost
 from app.services.quota import current_month_window
 from tests.conftest import key, make_tenant
@@ -92,6 +93,7 @@ def test_usage_follows_tenant_subscription_relationship_when_ids_diverge(client,
         id=42,
         name="Divergent IDs",
         email="divergent-ids@example.com",
+        api_key_hash=hash_api_key("divergent-test-key"),
         plan_id=1,
     )
     session.add(tenant)
@@ -101,6 +103,7 @@ def test_usage_follows_tenant_subscription_relationship_when_ids_diverge(client,
     session.commit()
 
     assert subscription.id != tenant.id
+    client.tenant_keys[tenant.id] = "divergent-test-key"
     response = client.get(f"/usage/{tenant.id}")
 
     assert response.status_code == 200

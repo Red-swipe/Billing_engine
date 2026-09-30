@@ -1,5 +1,19 @@
 # Build Log
 
+## Item 4 - Tenant API-key isolation
+
+The original API accepted `tenant_id` from `POST /generate` and allowed
+unauthenticated usage and checkout access, so a caller could select another
+tenant. Added a unique SHA-256 API-key hash to `Tenant`, a shared `X-API-Key`
+dependency, one-time key issuance for new tenants, and the seeded development
+key `test-tenant-api-key`. Generate, usage, and checkout now bind to the
+authenticated tenant; Stripe webhooks remain signature-only.
+
+Regression tests cover missing/invalid/valid keys, divergent tenant IDs,
+cross-tenant usage, generation, checkout, and webhook independence. No
+implementation mistake occurred during this change. The complete suite passed
+with 75 tests.
+
 Chronological record of what was built, why, and what was verified at each
 stage. Only work that actually happened is recorded here.
 

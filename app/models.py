@@ -38,6 +38,7 @@ class Tenant(Base):
     stripe_customer_id: Mapped[str | None] = mapped_column(
         String(255), nullable=True, unique=True
     )
+    api_key_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     plan_id: Mapped[int] = mapped_column(ForeignKey("plans.id"), nullable=False, default=1)
     status: Mapped[str] = mapped_column(String(50), nullable=False, default="active")
     created_at: Mapped[datetime] = mapped_column(nullable=False, default=utcnow)

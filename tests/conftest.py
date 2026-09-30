@@ -86,6 +86,29 @@ def client(db_engine):
 
     app.dependency_overrides[get_db] = override_get_db
     with TestClient(app) as c:
+        # Existing stage tests focus on billing behavior rather than HTTP
+        # credential plumbing. Inject the key returned by the test tenant
+        # factory when a test has not supplied one explicitly. Isolation tests
+        # pass X-API-Key themselves and therefore exercise the real boundary.
+        tenant_keys = {}
+        original_request = c.request
+
+        def authenticated_request(method, url, **kwargs):
+            headers = dict(kwargs.get("headers") or {})
+            if not any(k.lower() == "x-api-key" for k in headers):
+                tenant_id = None
+                if "/usage/" in url or "/checkout/" in url:
+                    tenant_id = int(url.rsplit("/", 1)[-1])
+                elif method.upper() == "POST" and "/generate" in url:
+                    body = kwargs.get("json") or {}
+                    tenant_id = body.get("tenant_id")
+                if tenant_id in tenant_keys:
+                    headers["X-API-Key"] = tenant_keys[tenant_id]
+                    kwargs["headers"] = headers
+            return original_request(method, url, **kwargs)
+
+        c.request = authenticated_request
+        c.tenant_keys = tenant_keys
         yield c
 
     app.dependency_overrides.clear()
@@ -150,7 +173,9 @@ def make_tenant(client, name="Test", email=None):
     email = email or f"{uuid.uuid4().hex}@example.com"
     resp = client.post("/tenants", json={"name": name, "email": email})
     assert resp.status_code == 201, resp.text
-    return resp.json()["id"], email
+    body = resp.json()
+    client.tenant_keys[body["id"]] = body["api_key"]
+    return body["id"], body["api_key"]
 
 
 def key():

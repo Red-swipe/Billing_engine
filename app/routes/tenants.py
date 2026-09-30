@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.auth import generate_api_key, hash_api_key
 from app.models import Plan, Subscription, Tenant
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
@@ -35,6 +36,7 @@ def create_tenant(payload: TenantCreate, db: Session = Depends(get_db)):
     tenant = Tenant(
         name=payload.name,
         email=payload.email,
+        api_key_hash=hash_api_key(api_key := generate_api_key()),
         plan_id=free_plan.id,
         status="active",
     )
@@ -57,4 +59,5 @@ def create_tenant(payload: TenantCreate, db: Session = Depends(get_db)):
         "email": tenant.email,
         "plan": free_plan.name,
         "status": tenant.status,
+        "api_key": api_key,
     }

@@ -23,6 +23,11 @@ no real model behind it. The client supplies the token counts. This keeps the
 billing machinery genuinely exercised without depending on an inference
 provider.
 
+Tenant-scoped endpoints require `X-API-Key`. Each tenant has a unique
+SHA-256 API-key hash in the database; the authenticated tenant is the source of
+truth rather than a request body or URL ID. Missing/invalid keys return `401`,
+and cross-tenant access returns `403`.
+
 ## Architecture
 
 ```
@@ -129,6 +134,7 @@ The API is then at `http://127.0.0.1:8000`, with interactive docs at `/docs`.
 
 Creates a tenant on the Free plan, together with an active Free subscription in
 the same transaction, so the returned tenant can generate immediately.
+The response includes the newly generated API key once; only its hash is stored.
 
 ```bash
 curl -X POST http://127.0.0.1:8000/tenants \
@@ -151,6 +157,7 @@ never generates one, because a synthesized key cannot make a retry idempotent.
 ```bash
 curl -X POST http://127.0.0.1:8000/generate \
   -H "Content-Type: application/json" \
+  -H "X-API-Key: <tenant-api-key>" \
   -H "X-Idempotency-Key: $(uuidgen)" \
   -d '{"tenant_id": 2, "input_tokens": 100, "cached_input_tokens": 0, "output_tokens": 50, "reasoning_tokens": 20}'
 ```
@@ -179,7 +186,7 @@ Current UTC calendar-month usage against plan limits, including deterministic
 cost derived from the four token buckets.
 
 ```bash
-curl http://127.0.0.1:8000/usage/2
+curl http://127.0.0.1:8000/usage/2 -H "X-API-Key: <tenant-api-key>"
 ```
 
 ```json
@@ -226,6 +233,8 @@ Verified results are recorded in [EVIDENCE.md](EVIDENCE.md).
 `GET /checkout/{tenant_id}` creates a subscription-mode Checkout Session for a
 Free tenant using `STRIPE_PRO_PRICE_ID`. It creates one Stripe customer on the
 first request, persists the customer ID, and reuses it on later requests.
+Checkout requires the API key belonging to the URL tenant. The seeded
+development tenant uses `test-tenant-api-key`; this is not a production secret.
 `APP_BASE_URL` supplies the success and cancel redirect URLs. A tenant already
 on active Pro receives `409` and no new session is created. Checkout creation
 alone never upgrades the local plan; that happens after a verified webhook.
@@ -235,6 +244,8 @@ alone never upgrades the local plan; that happens after a verified webhook.
 `customer.subscription.updated`, and `customer.subscription.deleted`. The
 database UNIQUE constraint on `stripe_events.stripe_event_id` makes verified
 replays and concurrent duplicate deliveries safe.
+The webhook does not require `X-API-Key`; Stripe signature verification remains
+its independent authentication mechanism.
 
 ### Local Stripe test-mode workflow
 
@@ -258,12 +269,21 @@ credentials and the Stripe CLI.
 | Tenant creation, automatic Free subscription | Implemented |
 | `POST /generate` metering, idempotency, quota | Implemented |
 | `GET /usage/{tenant_id}` monthly rollup | Implemented |
-| Test suite (Stages 2–4) | 69 passed |
-| `GET /checkout/{tenant_id}` | Implemented |
+| Test suite (Stages 2-4) | 75 passed |
+| `GET /checkout/{tenant_id}` | Implemented; API-key protected |
 | `POST /webhooks/stripe` | Implemented |
 | Pricing / monthly cost calculation | Implemented (`cost_cents`) |
 | `stripe_events` table and UNIQUE replay guard | Implemented |
 | Alembic migrations | Dependency present, unused; tables created via `create_all` |
+
+### Tenant API-key authentication
+
+`POST /generate`, `GET /usage/{tenant_id}`, and `GET /checkout/{tenant_id}`
+require `X-API-Key`. Cross-tenant body and URL IDs are rejected. The Stripe
+webhook is intentionally excluded and remains signature-authenticated. This
+repository has no Alembic history, so an existing database requires the same
+manual schema-management process already documented for the `create_all`
+limitation.
 
 ### Known limitation
 

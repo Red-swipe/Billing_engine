@@ -522,7 +522,15 @@ def test_concurrent_identical_keys_create_exactly_one_event(client, session):
     ],
 )
 def test_invalid_payloads_rejected_without_creating_events(client, session, body):
-    resp = client.post("/generate", json=body, headers={"X-Idempotency-Key": key()})
+    tenant_id, api_key = make_tenant(client)
+    original_tenant_id = body["tenant_id"]
+    if original_tenant_id > 0:
+        body = {**body, "tenant_id": tenant_id}
+    resp = client.post(
+        "/generate",
+        json=body,
+        headers={"X-API-Key": api_key, "X-Idempotency-Key": key()},
+    )
     assert resp.status_code == 422
     assert usage_count(session) == 0
 
@@ -533,5 +541,5 @@ def test_unknown_tenant_is_404(client, session):
         json={"tenant_id": 999_999, "input_tokens": 1},
         headers={"X-Idempotency-Key": key()},
     )
-    assert resp.status_code == 404
+    assert resp.status_code == 401
     assert usage_count(session) == 0

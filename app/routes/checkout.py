@@ -10,6 +10,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.auth import get_current_tenant
 from app.database import get_db
 from app.models import Plan, Subscription, Tenant
 from app.services.stripe_service import (
@@ -21,19 +22,23 @@ router = APIRouter(tags=["checkout"])
 
 
 @router.get("/checkout/{tenant_id}")
-def create_checkout(tenant_id: int, db: Session = Depends(get_db)):
+def create_checkout(
+    tenant_id: int,
+    db: Session = Depends(get_db),
+    authenticated_tenant: Tenant = Depends(get_current_tenant),
+):
     """Return a Checkout URL for upgrading this tenant to Pro.
 
     Already-Pro tenants get an explicit 409 rather than a silently created
     second session: the upgrade is already done, and a fresh session would be a
     second paid subscription for the same tenant.
     """
-    tenant = db.get(Tenant, tenant_id)
-    if tenant is None:
+    if tenant_id != authenticated_tenant.id:
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"tenant {tenant_id} does not exist",
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="API key does not belong to the requested tenant",
         )
+    tenant = authenticated_tenant
 
     subscription = db.execute(
         select(Subscription).where(Subscription.tenant_id == tenant_id)
