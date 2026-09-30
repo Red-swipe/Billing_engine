@@ -78,9 +78,8 @@ implemented:
     status: implemented
     file: tests/test_stage_b.py
     command: pytest -q
-    expected: 69 passed
+    expected: 70 passed
 
-implemented:
   - id: stripe-checkout
     description: GET /checkout/{tenant_id} — Stripe Checkout session creation.
     status: implemented
@@ -199,3 +198,7 @@ tags:
     Stage 2 complete. Points to commit bdd9322.
   stage-b-runnable: >-
     Fresh clone is runnable (seed.py and setup docs added).
+  stage-c-done: >-
+    Stage 3 complete. Points to commit ecf6af5.
+  stage-d-done: >-
+    Stage 4 complete. Points to commit 2fa950e.

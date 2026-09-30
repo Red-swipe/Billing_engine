@@ -163,7 +163,7 @@ Changes:
   subscription, reads `DATABASE_URL` from `.env`, and is idempotent. No secrets,
   no machine-specific paths, no dependency on probe databases.
 - Added `README.md` — setup, database initialization, run, all three endpoints,
-  testing, and an explicit note that Stripe is not implemented
+  testing, and a Stage 2 note that Stripe was not yet implemented at that time
 - Added `BUILDLOG.md` (this file) and `capstone.yaml`
 - Added `server.pid` to `.gitignore`
 - Removed two genuinely unused imports (`os` in `tests/conftest.py`, `uuid` and
@@ -223,15 +223,20 @@ modifying usage.
 Added 19 pricing, rounding, mixed-token, large-usage, monthly-window,
 read-only, and regression assertions. Probe 5 matched an independent expected
 cost of 1 cent for input=1,000, cached input=2,000, output=3,000, and
-reasoning=4,000. The full suite passed with 69 tests. Fresh-clone setup and
+reasoning=4,000. The full suite passed with 70 tests. Fresh-clone setup and
 cost verification are recorded in `EVIDENCE.md`; real Stripe test-mode
 verification remains unavailable without confirmed credentials/CLI.
 
-## Not yet built
+## Historical Stage 2 snapshot (superseded)
 
-- Stripe Checkout session creation
-- Stripe webhook receiver, signature verification, event deduplication
-- `subscription.updated` / `subscription.deleted` handling
+The following was accurate at the earlier Stage 2 checkpoint only. Stage 3
+and Stage 4 below subsequently implemented Stripe integration and pricing.
+
+- At that checkpoint, Stripe Checkout session creation was not yet built.
+- At that checkpoint, the Stripe webhook receiver, signature verification, and
+  event deduplication were not yet built.
+- At that checkpoint, `subscription.updated` / `subscription.deleted` handling
+  was not yet built.
 - Alembic migrations
 
 Alembic migrations remain outside this capstone stage and are listed in

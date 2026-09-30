@@ -209,7 +209,7 @@ pytest -q
 ```
 
 ```
-50 passed
+70 passed
 ```
 
 The suite runs against a throwaway SQLite database per test, created under the

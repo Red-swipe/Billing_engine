@@ -19,7 +19,7 @@ def get_usage(tenant_id: int, db: Session = Depends(get_db)):
             detail=f"tenant {tenant_id} does not exist",
         )
 
-    subscription = db.get(Subscription, tenant_id)
+    subscription = tenant.subscription
     if subscription is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -4,7 +4,7 @@ from datetime import timedelta
 
 import pytest
 
-from app.models import UsageEvent
+from app.models import Subscription, Tenant, UsageEvent
 from app.services.pricing import calculate_cost
 from app.services.quota import current_month_window
 from tests.conftest import key, make_tenant
@@ -84,3 +84,25 @@ def test_usage_reports_monthly_cost_and_excludes_previous_month(client, session)
     assert response.json()["tokens_used"] == 10_000
     assert before == after == 2
     assert end > start
+
+
+def test_usage_follows_tenant_subscription_relationship_when_ids_diverge(client, session):
+    """Usage must look up a subscription by tenant_id, not Subscription.id."""
+    tenant = Tenant(
+        id=42,
+        name="Divergent IDs",
+        email="divergent-ids@example.com",
+        plan_id=1,
+    )
+    session.add(tenant)
+    session.flush()
+    subscription = Subscription(tenant_id=tenant.id, plan_id=1, status="active")
+    session.add(subscription)
+    session.commit()
+
+    assert subscription.id != tenant.id
+    response = client.get(f"/usage/{tenant.id}")
+
+    assert response.status_code == 200
+    assert response.json()["tenant_id"] == tenant.id
+    assert response.json()["plan"] == "Free"
