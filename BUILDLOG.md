@@ -241,3 +241,32 @@ and Stage 4 below subsequently implemented Stripe integration and pricing.
 
 Alembic migrations remain outside this capstone stage and are listed in
 `capstone.yaml` as the only remaining item.
+
+## 2026-09-30 - Real Stripe verification checkpoint
+
+Objective: complete Examiner Item 1 using the existing Stripe test-mode probe
+and prove signature rejection plus database-backed webhook deduplication.
+
+The existing probe tenant 2 completed a real Stripe Checkout subscription at
+£10.00 GBP/month. Stripe reported a completed, paid subscription Checkout
+Session, and the live CLI forwarded `checkout.session.completed`
+`evt_1ULQ2iCSRoP1ezLYuediQy1r` to `POST /webhooks/stripe`, which returned HTTP
+200. Tenant 2 became Pro with an active subscription, and `GET /usage/2`
+returned HTTP 200 with `plan=Pro`.
+
+The exact stored real webhook payload was sent once with an intentionally
+forged signature and returned HTTP 400 with no change to the event count,
+tenant, or subscription state. The same exact event body was then replayed
+twice with a valid signature; both deliveries returned HTTP 200 with
+`result=duplicate`. The original live delivery was the processed delivery;
+the replay checks confirmed exactly one `stripe_events` row and no duplicate
+subscription state.
+
+Issue discovered: the Checkout success redirect points to
+`http://localhost:8000/`, which is not an implemented API route and therefore
+returns HTTP 404 after the successful payment and webhook processing. No
+application code was changed for this checkpoint; the redirect is documented
+as a known presentation/integration issue.
+
+Regression result: `70 passed, 1 warning`. The warning is the existing
+Starlette/httpx deprecation warning. `billing.db` was not used or modified.

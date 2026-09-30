@@ -412,10 +412,70 @@ GET /health -> 200 {"status":"ok"}
 
 ```
 Automated/mock Stripe tests: PASS
-Real Stripe test-mode probe: BLOCKED / NOT RUN
-Reason: no confirmed real Stripe test credentials or Stripe CLI were available;
-the repository contains placeholders only, so no live result is claimed.
+Real Stripe test-mode probe: PASS
+Test date: 2026-09-30
+Tenant: 2
+Price: £10.00 GBP/month
+Checkout session: complete; payment_status=paid; mode=subscription
+checkout.session.completed: evt_1ULQ2iCSRoP1ezLYuediQy1r
+Webhook response: HTTP 200
+Tenant plan after webhook: Pro
+Subscription status: active
+GET /usage/2: HTTP 200; plan=Pro; api_calls_used=0; tokens_used=0
 ```
+
+The Checkout Session was created in Stripe test mode and completed with the
+standard test card. Stripe persisted customer `cus_VM8EwJsjby4lHs` and
+subscription `sub_1ULQ2hCSRoP1ezLY4r4kGEKi` for tenant 2. The live Stripe CLI
+observed `checkout.session.completed` and forwarded it to the application;
+`customer.subscription.updated` was not observed during this probe.
+
+### Forged Webhook
+
+The exact stored payload for `evt_1ULQ2iCSRoP1ezLYuediQy1r` was sent to the
+real `POST /webhooks/stripe` endpoint with an intentionally invalid signature:
+
+```text
+HTTP 400
+{"error":"invalid_signature","message":"No signatures found matching the expected signature for payload"}
+DB event count before=1; after=1
+Event row for evt_1ULQ2iCSRoP1ezLYuediQy1r before=1; after=1
+Tenant/subscription state changed: NO
+```
+
+The forged request was rejected before signature verification could mutate any
+database state.
+
+### Replay / Deduplication
+
+The exact raw payload stored for the real event was replayed twice with a valid
+signature for the active Stripe listener:
+
+```text
+first delivery  -> HTTP 200, result=duplicate
+second delivery -> HTTP 200, result=duplicate
+stripe_events rows for evt_1ULQ2iCSRoP1ezLYuediQy1r: 1
+total stripe_events rows: 1
+tenant 2: plan_id=2, status=active
+subscription tenant_id=2: plan_id=2, status=active,
+  stripe_subscription_id=sub_1ULQ2hCSRoP1ezLY4r4kGEKi
+```
+
+The original live delivery was the processed delivery (`HTTP 200`), and both
+subsequent exact replays were acknowledged as duplicates. No duplicate
+subscription or second `stripe_events` row was created.
+
+### Redirect Note
+
+After successful Stripe payment and webhook processing, Stripe redirected to:
+
+```text
+http://localhost:8000/
+```
+
+The root path is not an implemented API route, so it returned HTTP 404
+(`{"detail":"Not Found"}`). This occurred after payment completion and after
+the webhook had already upgraded tenant 2 to Pro.
 
 No `.env`, database, log, pid, cache, or secret file was staged in the Stage 3
 commit. The working tree was clean after commit creation.

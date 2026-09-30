@@ -1,5 +1,6 @@
 # Environment / secrets
 .env
+stripe keys.txt
 
 # Python bytecode
 __pycache__/
