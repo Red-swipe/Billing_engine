@@ -1,7 +1,7 @@
 # Section 6 Acceptance Evidence
 
 This document is an examiner-facing acceptance checklist for the current
-repository. The current full regression result is **82 passed**. Claims below
+repository. The current full regression result is **85 passed**. Claims below
 are limited to committed implementation, automated tests, and the recorded
 real Stripe test-mode probe.
 
@@ -15,7 +15,7 @@ real Stripe test-mode probe.
 | Cross-tenant `/generate` rejected | PASS | `tests/test_auth.py::test_generate_cannot_cross_tenant_boundary` |
 | Cross-tenant checkout rejected | PASS | `tests/test_auth.py::test_checkout_cannot_cross_tenant_boundary` |
 | Webhook remains independently authenticated | PASS | `tests/test_auth.py::test_webhook_remains_signature_authenticated_only` |
-| Full regression | PASS | `82 passed` |
+| Full regression | PASS | `85 passed` |
 
 Tenant API keys are stored only as SHA-256 hashes. Isolation tests use different
 tenant IDs and different API keys.
@@ -40,7 +40,7 @@ tenant IDs and different API keys.
   genuine pre-Alembic revision or migration snapshot. The baseline is honest
   about that limitation; existing databases from the prior `create_all`-only
   implementation may require explicit recreation or manual migration.
-- Full regression after migration work: **PASS** — `82 passed`.
+- Full regression after migration work: **PASS** — `85 passed` after Item 7.
 
 ## Section 6 Checklist
 
@@ -48,10 +48,10 @@ tenant IDs and different API keys.
 |---|---|---|---|
 | 1. One usage event per action, deduped by key | PASS | test_generate_creates_exactly_one_usage_event; test_same_key_twice_returns_identical_response_and_one_row; test_concurrent_identical_keys_create_exactly_one_event | One successful action creates one usage_events row. Replays return the stored result and do not add a row. |
 | 2. Quota checked before action | PASS | test_api_quota_boundary_at_limit; test_token_quota_boundary_at_limit; app/services/usage_service.py | Quota is checked before insert. Rejected requests create zero usage rows and leave the rejected key retryable. |
-| 3. 429 / 402 clear error responses | PARTIAL | test_api_quota_boundary_at_limit; test_inactive_subscription_is_402_and_creates_no_event; test_402_is_distinct_from_429; app/routes/generate.py | 429 and 402 return structured JSON with distinct error codes and messages. No Retry-After header is implemented on 429, so header-based retry guidance is incomplete. |
-| 4. Monthly usage rolls into cost | PARTIAL | test_usage_reports_monthly_cost_and_excludes_previous_month; GET /usage/{tenant_id} implementation | Monthly token usage is rolled into integer cost_cents, with previous-month rows excluded. API-call pricing is not included in cost_cents. |
-| 5. Token pricing rules | PASS | tests/test_stage_d.py: test_calculate_cost_exact_rates_and_fractional_units, test_calculate_cost_mixed_and_reasoning_is_not_double_counted, test_calculate_cost_rounds_half_up | Input is $0.00025/1k, cached input is $0.000025/1k, output is $0.00075/1k; reasoning is charged once at the output rate; results are integer cents rounded half-up. |
-| 6. Pricing pinned in configuration | PARTIAL | app/services/pricing.py; app/config.py; pricing tests | Rates are centralized as constants in app/services/pricing.py, but they are not configuration values in app/config.py. |
+| 3. 429 / 402 clear error responses | PASS | `tests/test_stage_b.py::test_api_quota_boundary_at_limit`; inactive-subscription tests; `app/routes/generate.py` | 429 and 402 retain distinct structured errors; quota 429 now includes a non-negative integer `Retry-After` until the UTC month reset. |
+| 4. Monthly usage rolls into cost | PASS | `tests/test_stage_d.py::test_usage_cost_includes_api_calls_and_uses_month_window`; `GET /usage/{tenant_id}` | Monthly API calls and token buckets are aggregated in the UTC half-open window; cost is token cost plus configured API-call cost, with previous-month rows excluded. |
+| 5. Token pricing rules | PASS | `tests/test_stage_d.py` pricing tests | Input is $0.00025/1k, cached input is $0.000025/1k, output is $0.00075/1k; reasoning is charged once at the output rate; results are deterministic integer cents. |
+| 6. Pricing pinned in configuration | PASS | `app/config.py`; `tests/test_stage_d.py::test_pricing_rates_are_pinned_in_settings`; `test_configured_api_call_price_is_added_as_integer_cents` | Token rates and `API_CALL_PRICE_CENTS` are Settings fields loaded from environment-configurable values and consumed by the pricing function. |
 | 7. Checkout works end-to-end in Stripe test mode | PASS | Recorded real Stripe test-mode probe; Stripe CLI forwarding evidence | Real Stripe Checkout completed successfully for Tenant 2 in test mode. |
 | 8. Webhooks verify signatures | PASS | Real forged-signature probe; test_forged_signature_returns_400_and_writes_nothing; test_signature_from_wrong_secret_is_rejected | Forged signature returned HTTP 400 and changed no database state. |
 | 9. Webhooks deduplicate events | PASS | Real replay probe; test_replay_same_event_twice_processes_once; test_duplicate_delivery_does_not_reapply_business_operation | Replays returned HTTP 200 duplicate. Exactly one stripe_events row existed and no duplicate subscription was created. |
@@ -65,6 +65,27 @@ tenant IDs and different API keys.
 | 17. Secrets hygiene | PASS | app/config.py; checkout secret-response test; repository history/status checks | Stripe credentials are loaded from environment variables, the secret key is not returned by checkout, and runtime secret/database/log files were not staged in the checkpoint commits. |
 | 18. Background job with retries/failure alert | PASS | `tests/test_background_jobs.py`; `app/services/background_jobs.py` | Usage-cost reconciliation is scheduled with FastAPI BackgroundTasks, retries are bounded/configurable, and one structured alert is emitted only after final failure. |
 | 19. Schema migrations | PASS with historical limitation | `alembic.ini`; `alembic/env.py`; `alembic/versions/20260930_0001_initial_schema.py`; `tests/test_migrations.py` | Fresh schema and application compatibility are verified through Alembic. No genuine pre-Alembic revision exists, so an upgrade from the old `create_all`-only schema is not claimed. |
+
+### Item 7 — Cost Calculation / Pricing / Retry-After Evidence
+
+- Pricing configuration: **PASS** — `app.config.Settings` owns the three
+  token rates and `API_CALL_PRICE_CENTS`; `pricing.py` contains no hidden
+  request-local pricing values.
+- Token cost: **PASS** — exact `Decimal` arithmetic with half-up rounding
+  returns integer cents, preserving the established rates and reasoning rule.
+- API-call cost: **PASS** — `cost_cents` uses
+  `token_cost_cents + api_calls_used * API_CALL_PRICE_CENTS`. The assignment
+  does not specify a numeric API-call rate, so the documented default is zero
+  cents and a non-zero value can be supplied through configuration.
+- Monthly window and isolation: **PASS** — current-month calls/tokens are
+  included, prior-month events are excluded, and existing tenant-authenticated
+  usage isolation remains covered by `tests/test_auth.py`.
+- Subscription price distinction: **PASS** — `plans.price_cents` and the
+  Stripe Price ID describe subscription billing; they are not added to usage
+  `cost_cents`.
+- Retry guidance: **PASS** — quota HTTP 429 responses retain their structured
+  error and include a non-negative integer `Retry-After` calculated as the
+  seconds until the UTC calendar-month reset.
 
 ## Real Stripe Evidence
 

@@ -7,11 +7,10 @@ used. The final cent value is rounded half-up.
 
 from decimal import Decimal, ROUND_HALF_UP
 
+from app.config import settings
+
 
 TOKENS_PER_UNIT = Decimal("1000")
-INPUT_RATE_DOLLARS_PER_1K = Decimal("0.00025")
-CACHED_INPUT_RATE_DOLLARS_PER_1K = Decimal("0.000025")
-OUTPUT_RATE_DOLLARS_PER_1K = Decimal("0.00075")
 
 
 def calculate_cost(
@@ -19,11 +18,14 @@ def calculate_cost(
     cached_input_tokens: int,
     output_tokens: int,
     reasoning_tokens: int,
+    api_calls: int = 0,
 ) -> int:
-    """Return the exact usage cost in integer cents.
+    """Return the exact metered usage cost in integer cents.
 
     Reasoning tokens are billed once at the output rate, together with output
-    tokens. Inputs are not rounded to whole thousands before pricing.
+    tokens. Inputs are not rounded to whole thousands before pricing. API-call
+    pricing is an integer-cent setting and defaults to zero because the brief
+    does not define a numeric per-call rate.
     """
     token_counts = (
         input_tokens,
@@ -31,13 +33,19 @@ def calculate_cost(
         output_tokens,
         reasoning_tokens,
     )
-    if any(not isinstance(value, int) or isinstance(value, bool) or value < 0 for value in token_counts):
+    if any(
+        not isinstance(value, int) or isinstance(value, bool) or value < 0
+        for value in (*token_counts, api_calls)
+    ):
         raise ValueError("token counts must be non-negative integers")
 
     dollars = (
-        Decimal(input_tokens) * INPUT_RATE_DOLLARS_PER_1K
-        + Decimal(cached_input_tokens) * CACHED_INPUT_RATE_DOLLARS_PER_1K
-        + Decimal(output_tokens + reasoning_tokens) * OUTPUT_RATE_DOLLARS_PER_1K
+        Decimal(input_tokens) * settings.INPUT_RATE_DOLLARS_PER_1K
+        + Decimal(cached_input_tokens) * settings.CACHED_INPUT_RATE_DOLLARS_PER_1K
+        + Decimal(output_tokens + reasoning_tokens)
+        * settings.OUTPUT_RATE_DOLLARS_PER_1K
     ) / TOKENS_PER_UNIT
-    cents = (dollars * Decimal("100")).quantize(Decimal("1"), rounding=ROUND_HALF_UP)
-    return int(cents)
+    token_cents = (dollars * Decimal("100")).quantize(
+        Decimal("1"), rounding=ROUND_HALF_UP
+    )
+    return int(token_cents) + api_calls * settings.API_CALL_PRICE_CENTS

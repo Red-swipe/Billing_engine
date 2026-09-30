@@ -8,6 +8,7 @@ The window is half-open [month_start, month_end) so adjacent months never both
 claim an event that lands exactly on midnight.
 """
 
+import math
 from datetime import datetime, timedelta
 
 from sqlalchemy import func, select
@@ -39,6 +40,14 @@ def current_month_window(now: datetime | None = None) -> tuple[datetime, datetim
     else:
         month_end = month_start.replace(month=month_start.month + 1)
     return month_start, month_end
+
+
+def retry_after_seconds(now: datetime | None = None) -> int:
+    """Return whole seconds until the current UTC quota window resets."""
+    if now is None:
+        now = datetime.utcnow()
+    _month_start, month_end = current_month_window(now)
+    return max(0, math.ceil((month_end - now).total_seconds()))
 
 
 def monthly_usage(

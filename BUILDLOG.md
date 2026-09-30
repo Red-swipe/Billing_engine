@@ -33,6 +33,23 @@ stage. Only work that actually happened is recorded here.
 
 ---
 
+## Item 7 - Usage cost, pricing configuration, and Retry-After
+
+Inspection found three real gaps: pricing rates lived in `pricing.py` instead
+of the Settings layer, `/usage` calculated token cost without applying the
+stored API-call count, and quota 429 responses had no `Retry-After` header.
+The assignment specifies token rates but no numeric per-call rate, so the
+smallest honest implementation added configurable `API_CALL_PRICE_CENTS` with
+a documented zero-cent default and included `api_calls_used` in the total
+formula. Subscription `price_cents` remains separate from metered usage cost.
+
+Added focused tests for Settings-backed rates, integer-cent API-call costing,
+monthly cost behavior, and quota `Retry-After`. The header is calculated from
+the UTC month-end reset rather than hardcoded. No Stripe or tenant-isolation
+behavior was changed. The full regression suite passed with 85 tests.
+
+---
+
 ## Item 6 - Alembic schema migrations
 
 The original implementation listed Alembic as a dependency but had no

@@ -191,6 +191,7 @@ def test_api_quota_boundary_at_limit(client, session):
         headers={"X-Idempotency-Key": key()},
     )
     assert over.status_code == 429
+    assert int(over.headers["Retry-After"]) >= 0
     detail = over.json()["detail"]
     assert detail["limit_type"] == "api_calls"
     assert detail["used"] == 1000

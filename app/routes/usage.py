@@ -44,5 +44,5 @@ def get_usage(
         "api_calls_limit": plan.api_calls_limit,
         "tokens_used": tokens_used,
         "tokens_limit": plan.tokens_limit,
-        "cost_cents": calculate_cost(*token_buckets),
+        "cost_cents": calculate_cost(*token_buckets, api_calls=api_calls_used),
     }

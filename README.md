@@ -13,9 +13,9 @@ the job name, job identifier, attempt count, and failure reason. This is an
 in-process background task, not production-grade distributed queue
 infrastructure.
 
-This repository is at **Stage 4 (pricing and finalization)**. Monthly usage
-cost is calculated deterministically from usage events and returned as integer
-cents.
+This repository is at **Item 7 (usage cost and quota response handling)**.
+Monthly usage cost is calculated deterministically from usage events and
+returned as integer cents.
 
 ## What it does
 
@@ -188,7 +188,7 @@ curl -X POST http://127.0.0.1:8000/generate \
 | `402` | Subscription not active | No |
 | `404` | Unknown `tenant_id` | No |
 | `422` | Invalid body | No |
-| `429` | Would exceed a plan limit | No |
+| `429` | Would exceed a plan limit; includes `Retry-After` seconds until the UTC month reset | No |
 
 A repeated key returns the stored status and body byte-for-byte, including the
 original `usage_event_id`. Because `402` and `429` write no row, their keys are
@@ -197,7 +197,7 @@ never consumed and can be retried later.
 ### `GET /usage/{tenant_id}`
 
 Current UTC calendar-month usage against plan limits, including deterministic
-cost derived from the four token buckets.
+cost derived from the four token buckets and configured API-call rate.
 
 ```bash
 curl http://127.0.0.1:8000/usage/2 -H "X-API-Key: <tenant-api-key>"
@@ -222,6 +222,28 @@ allowed its last call, and the next is rejected. `cached_input_tokens` counts
 toward the token limit.
 
 All money is integer cents. There is no float money anywhere in the codebase.
+
+### Usage cost and pricing configuration
+
+Token rates are pinned in `app.config.Settings` and can be overridden through
+the environment: input `$0.00025 / 1k`, cached input `$0.000025 / 1k`, and
+output `$0.00075 / 1k`. Reasoning tokens use the output rate. The final token
+amount is rounded half-up to integer cents using `Decimal`.
+
+`cost_cents` is calculated as:
+
+```text
+token_cost_cents + api_calls_used * API_CALL_PRICE_CENTS
+```
+
+The assignment does not define a numeric API-call rate, so
+`API_CALL_PRICE_CENTS` defaults to `0` and is explicitly configurable rather
+than inventing a charge. API calls are still counted in the monthly rollup and
+are included automatically if a non-zero rate is configured.
+
+The Pro plan's `price_cents` and Stripe Price ID represent subscription
+billing; the monthly usage `cost_cents` is metered usage and does not add the
+subscription fee a second time.
 
 ## Testing
 
@@ -283,7 +305,7 @@ credentials and the Stripe CLI.
 | Tenant creation, automatic Free subscription | Implemented |
 | `POST /generate` metering, idempotency, quota | Implemented |
 | `GET /usage/{tenant_id}` monthly rollup | Implemented |
-| Test suite (Stages 2-6) | 82 passed |
+| Test suite (Items 1-7) | 85 passed |
 | `GET /checkout/{tenant_id}` | Implemented; API-key protected |
 | `POST /webhooks/stripe` | Implemented |
 | Background usage-cost reconciliation | Implemented with bounded retries and failure alert |

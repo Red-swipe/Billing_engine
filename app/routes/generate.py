@@ -9,7 +9,7 @@ from app.database import get_db
 from app.auth import get_current_tenant
 from app.models import Tenant
 from app.services.usage_service import SubscriptionInactive, meter_request
-from app.services.quota import QuotaExceeded
+from app.services.quota import QuotaExceeded, retry_after_seconds
 from app.services.background_jobs import schedule_usage_reconciliation
 
 router = APIRouter(tags=["generate"])
@@ -84,7 +84,9 @@ def generate(
     except QuotaExceeded as exc:
         # No usage_events row was written, so this key stays retryable.
         raise HTTPException(
-            status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail=exc.to_detail()
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=exc.to_detail(),
+            headers={"Retry-After": str(retry_after_seconds())},
         ) from exc
 
     # Serialise here, once, for BOTH the fresh and the replayed path, so the

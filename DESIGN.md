@@ -347,10 +347,16 @@ returns the authoritative result as integer `cost_cents`. Token quantities are
 not rounded before conversion from per-1,000 pricing. The final total is
 rounded to cents with `ROUND_HALF_UP`.
 
+The rates are pinned in `app.config.Settings` and may be supplied through the
+environment. `API_CALL_PRICE_CENTS` is also configurable; the brief does not
+define a numeric per-call rate, so it defaults to zero. The usage total is
+`token_cost_cents + api_calls_used * API_CALL_PRICE_CENTS`. The plan's
+`price_cents` remains subscription billing and is not added to metered usage.
+
 `GET /usage/{tenant_id}` aggregates the four token columns from usage events in
 the UTC half-open window `[month_start, month_end)`, then calls
-`calculate_cost`. Usage events are the source of truth; cost is not persisted,
-so it cannot become stale or be double-counted.
+`calculate_cost` with the monthly API-call count. Usage events are the source
+of truth; cost is not persisted, so it cannot become stale or be double-counted.
 
 ```json
 {

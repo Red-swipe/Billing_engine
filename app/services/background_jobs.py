@@ -79,6 +79,7 @@ def reconcile_usage_cost(
     tenant_id: int,
     usage_event_id: int,
     counts: dict[str, int],
+    api_calls: int = 1,
 ) -> int:
     """Reconcile one newly recorded event's deterministic billing cost.
 
@@ -90,6 +91,7 @@ def reconcile_usage_cost(
         counts["cached_input_tokens"],
         counts["output_tokens"],
         counts["reasoning_tokens"],
+        api_calls=api_calls,
     )
     logger.info(
         "usage_cost_reconciled",

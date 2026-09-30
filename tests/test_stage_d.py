@@ -1,12 +1,15 @@
 """Stage 4 pricing and monthly cost tests."""
 
 from datetime import timedelta
+from dataclasses import replace
+from decimal import Decimal
 
 import pytest
 
 from app.models import Subscription, Tenant, UsageEvent
 from app.auth import hash_api_key
 from app.services.pricing import calculate_cost
+from app.services import pricing as pricing_module
 from app.services.quota import current_month_window
 from tests.conftest import key, make_tenant
 
@@ -46,13 +49,63 @@ def test_calculate_cost_rounds_half_up():
     assert calculate_cost(0, 0, 33334, 0) == 3
 
 
+def test_pricing_rates_are_pinned_in_settings():
+    from app.config import settings
+
+    assert pricing_module.settings is settings
+    assert settings.INPUT_RATE_DOLLARS_PER_1K == Decimal("0.00025")
+    assert settings.CACHED_INPUT_RATE_DOLLARS_PER_1K == Decimal("0.000025")
+    assert settings.OUTPUT_RATE_DOLLARS_PER_1K == Decimal("0.00075")
+
+
+def test_configured_api_call_price_is_added_as_integer_cents(monkeypatch):
+    monkeypatch.setattr(
+        pricing_module,
+        "settings",
+        replace(pricing_module.settings, API_CALL_PRICE_CENTS=2),
+    )
+
+    assert calculate_cost(1000, 0, 0, 0, api_calls=3) == 6
+    assert isinstance(calculate_cost(1000, 0, 0, 0, api_calls=3), int)
+
+
+def test_usage_cost_includes_api_calls_and_uses_month_window(
+    client, session, monkeypatch
+):
+    tenant_id, _ = make_tenant(client)
+    start, _end = current_month_window()
+    session.add(
+        UsageEvent(
+            tenant_id=tenant_id,
+            api_calls=3,
+            input_tokens=1000,
+            idempotency_key=key(),
+            created_at=start + timedelta(days=1),
+        )
+    )
+    session.commit()
+
+    monkeypatch.setattr(
+        pricing_module,
+        "settings",
+        replace(pricing_module.settings, API_CALL_PRICE_CENTS=2),
+    )
+    response = client.get(f"/usage/{tenant_id}")
+
+    assert response.status_code == 200
+    assert response.json()["api_calls_used"] == 3
+    assert response.json()["cost_cents"] == 6
+
+
 @pytest.mark.parametrize("bad", [-1, 1.5, True])
 def test_calculate_cost_rejects_invalid_token_counts(bad):
     with pytest.raises(ValueError):
         calculate_cost(bad, 0, 0, 0)
 
 
-def test_usage_reports_monthly_cost_and_excludes_previous_month(client, session):
+def test_usage_reports_monthly_cost_and_excludes_previous_month(
+    client, session, monkeypatch
+):
     tenant_id, _ = make_tenant(client)
     start, end = current_month_window()
     session.add_all(
@@ -77,11 +130,19 @@ def test_usage_reports_monthly_cost_and_excludes_previous_month(client, session)
     session.commit()
 
     before = session.query(UsageEvent).count()
+    monkeypatch.setattr(
+        pricing_module,
+        "settings",
+        replace(pricing_module.settings, API_CALL_PRICE_CENTS=2),
+    )
     response = client.get(f"/usage/{tenant_id}")
     after = session.query(UsageEvent).count()
 
     assert response.status_code == 200
-    assert response.json()["cost_cents"] == calculate_cost(1000, 2000, 3000, 4000)
+    assert response.json()["api_calls_used"] == 1
+    assert response.json()["cost_cents"] == calculate_cost(
+        1000, 2000, 3000, 4000, api_calls=1
+    )
     assert response.json()["tokens_used"] == 10_000
     assert before == after == 2
     assert end > start
