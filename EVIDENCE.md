@@ -138,7 +138,8 @@ GET /usage/1 after
 
 Arithmetic: `100000 + 200000 + 300000 + 300000 = 900000` tokens.
 Cost: `2.5` input cents + `0.5` cached-input cents + `22.5` output cents +
-`22.5` reasoning cents = `48` cents. The observed usage delta is
+`22.5` reasoning cents = `48` cents. Reasoning tokens intentionally use the
+output-token rate of 75 cents per million in this pricing model. The observed usage delta is
 `tokens_used +900000` and `cost_cents +48`, matching the expected result.
 
 The real event payload was retrieved from Stripe test mode and delivered to
