@@ -87,33 +87,35 @@ tenant IDs and different API keys.
   error and include a non-negative integer `Retry-After` calculated as the
   seconds until the UTC calendar-month reset.
 
-## Real Stripe Evidence
+## Final Real Stripe Evidence - 2026-10-01
 
-Recorded from the real Stripe test-mode checkout and webhook probe:
+Recorded from the real Stripe test-mode checkout and fresh Alembic database probe:
 
 ~~~text
-Real Stripe Checkout: PASS
-Payment completed: YES
-Tenant: 2
-Price: £10.00 GBP/month
-checkout.session.completed: PASS
-Real event ID: evt_1ULQ2iCSRoP1ezLYuediQy1r
+Checkout Session: cs_test_a1gLIcqUiMcMe9HOs9jYWwT7IpN2YqtGpx367LKJH1Bdrw11Z1tLyXbCUQ
+Payment completed: PASS (status=complete, payment_status=paid)
+Tenant: 1
+Real event ID: evt_1ULj2gCSRoP1ezLYzMAMUhTd
+Event type: checkout.session.completed
 Webhook response: HTTP 200
-Stripe customer persisted: YES
-Subscription persisted: YES
+Stripe customer ID: cus_VMB4Gjsdp8Tqyq
+Stripe subscription ID: sub_1ULj2fCSRoP1ezLYdwdug5UE
 Plan: Pro
 Subscription status: active
-GET /usage/2: HTTP 200
+Fresh Alembic database: probe_final.db, revision 20260930_0001 (head)
+Required index: ix_usage_events_tenant_created_at = (tenant_id, created_at)
 ~~~
 
-The live Stripe CLI observed checkout.session.completed and forwarded it to
-POST /webhooks/stripe. customer.subscription.updated was not observed during
-this real checkout probe; it is covered by automated tests only.
+The real event payload was retrieved from Stripe test mode and delivered to
+POST /webhooks/stripe with a valid Stripe signature. customer.subscription.created
+was observed in Stripe for this flow; customer.subscription.updated was not
+observed and remains covered by automated tests only.
 
 ### Forged Signature
 
 ~~~text
-HTTP 400: PASS
+Forged signature response: HTTP 400
+Forged response body: {"detail":"Invalid webhook signature"}
 Database unchanged: PASS
 ~~~
 
@@ -124,10 +126,11 @@ unchanged.
 ### Replay / Deduplication
 
 ~~~text
-Original live delivery: processed
+Original live delivery: HTTP 200 processed
 Replay: HTTP 200 duplicate
 Exactly one stripe_events row: PASS
 Duplicate subscription: NO
+Stored row: evt_1ULj2gCSRoP1ezLYzMAMUhTd | checkout.session.completed | processed=1
 ~~~
 
 The original live delivery processed the checkout event. Subsequent exact
@@ -220,7 +223,7 @@ Tenant plan
 
 ~~~text
 .\\venv\\Scripts\\python.exe -m pytest -q
-70 passed
+85 passed
 ~~~
 
 The suite completes with one existing Starlette/httpx deprecation warning.

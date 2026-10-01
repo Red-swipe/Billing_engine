@@ -333,5 +333,28 @@ returns HTTP 404 after the successful payment and webhook processing. No
 application code was changed for this checkpoint; the redirect is documented
 as a known presentation/integration issue.
 
-Regression result: `70 passed, 1 warning`. The warning is the existing
+Historical checkpoint regression result: `70 passed, 1 warning`. The warning is the existing
 Starlette/httpx deprecation warning. `billing.db` was not used or modified.
+
+## 2026-10-01 - Final Stripe/Alembic verification
+
+Completed the real Stripe test-mode Checkout Session for Tenant 1 using the
+complete saved Checkout URL and test card `4242 4242 4242 4242`. Stripe reported
+`status=complete` and `payment_status=paid` for session
+`cs_test_a1gLIcqUiMcMe9HOs9jYWwT7IpN2YqtGpx367LKJH1Bdrw11Z1tLyXbCUQ`.
+
+The real `checkout.session.completed` event
+`evt_1ULj2gCSRoP1ezLYzMAMUhTd` was delivered to the webhook endpoint and
+returned HTTP 200. Tenant mapping was verified from Stripe
+(`client_reference_id=1`, metadata `tenant_id=1`, `plan=Pro`) and in the fresh
+Alembic database: Tenant 1 is Pro/active with customer
+`cus_VMB4Gjsdp8Tqyq` and subscription `sub_1ULj2fCSRoP1ezLYdwdug5UE`.
+
+The forged-signature probe returned HTTP 400 with no database change. Replaying
+the legitimate event returned HTTP 200 `duplicate`; exactly one
+`stripe_events` row exists and no duplicate subscription was created. The fresh
+database is at Alembic head `20260930_0001`, and
+`ix_usage_events_tenant_created_at` was verified as `(tenant_id, created_at)`.
+
+Final regression inventory: 85 tests collected; the existing Starlette/httpx
+deprecation warning remains non-functional.
