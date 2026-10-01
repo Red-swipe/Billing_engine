@@ -40,7 +40,7 @@ tenant IDs and different API keys.
   genuine pre-Alembic revision or migration snapshot. The baseline is honest
   about that limitation; existing databases from the prior `create_all`-only
   implementation may require explicit recreation or manual migration.
-- Full regression after migration work: **PASS** — `85 passed` after Item 7.
+- Full regression after migration work: **PASS** - `85 passed`.
 
 ## Section 6 Checklist
 
@@ -107,6 +107,39 @@ Subscription status: active
 Fresh Alembic database: probe_final.db, revision 20260930_0001 (head)
 Required index: ix_usage_events_tenant_created_at = (tenant_id, created_at)
 ~~~
+
+### P3 live usage after upgrade
+
+Captured from the final Stripe database (`probe_final.db`) through the
+authenticated Tenant 1 endpoint:
+
+~~~text
+GET /usage/1
+{"tenant_id":1,"month_start":"2026-10-01T00:00:00Z","month_end":"2026-11-01T00:00:00Z","plan":"Pro","api_calls_used":0,"api_calls_limit":50000,"tokens_used":0,"tokens_limit":5000000,"cost_cents":0}
+~~~
+
+This is the live Pro usage response after the real Stripe upgrade; it shows
+`api_calls_limit=50000` and `tokens_limit=5000000`.
+
+### P5 exact pricing totals
+
+The same authenticated Tenant 1 was measured before and after one new generate
+request with `input_tokens=100000`, `cached_input_tokens=200000`,
+`output_tokens=300000`, and `reasoning_tokens=300000`:
+
+~~~text
+GET /usage/1 before
+{"tenant_id":1,"month_start":"2026-10-01T00:00:00Z","month_end":"2026-11-01T00:00:00Z","plan":"Pro","api_calls_used":0,"api_calls_limit":50000,"tokens_used":0,"tokens_limit":5000000,"cost_cents":0}
+POST /generate
+{"cached_input_tokens": 200000, "completion": "dummy completion", "input_tokens": 100000, "output_tokens": 300000, "reasoning_tokens": 300000, "tenant_id": 1, "usage_event_id": 1}
+GET /usage/1 after
+{"tenant_id":1,"month_start":"2026-10-01T00:00:00Z","month_end":"2026-11-01T00:00:00Z","plan":"Pro","api_calls_used":1,"api_calls_limit":50000,"tokens_used":900000,"tokens_limit":5000000,"cost_cents":48}
+~~~
+
+Arithmetic: `100000 + 200000 + 300000 + 300000 = 900000` tokens.
+Cost: `2.5` input cents + `0.5` cached-input cents + `22.5` output cents +
+`22.5` reasoning cents = `48` cents. The observed usage delta is
+`tokens_used +900000` and `cost_cents +48`, matching the expected result.
 
 The real event payload was retrieved from Stripe test mode and delivered to
 POST /webhooks/stripe with a valid Stripe signature. customer.subscription.created

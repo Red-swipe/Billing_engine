@@ -1,5 +1,5 @@
 run: uvicorn app.main:app --reload
-seed: python seed.py
+seed: alembic upgrade head && python seed.py
 test: pytest -q
 test_result: 85 passed
 base_url: http://localhost:8000

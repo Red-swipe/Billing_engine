@@ -86,14 +86,12 @@ venv\Scripts\activate          # Windows
 # source venv/bin/activate     # macOS / Linux
 
 pip install -r requirements.txt
-```
 
-### Configure
-
-```bash
 copy .env.example .env          # Windows
 # cp .env.example .env          # macOS / Linux
 ```
+
+### Configure
 
 `.env.example` ships with safe placeholders. Stripe values are required only for
 the checkout and webhook paths; the automated suite mocks Stripe API calls and
