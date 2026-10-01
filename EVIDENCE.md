@@ -1,9 +1,22 @@
 # Section 6 Acceptance Evidence
 
 This document is an examiner-facing acceptance checklist for the current
-repository. The current full regression result is **85 passed**. Claims below
+repository. The current full regression result is **86 passed**. Claims below
 are limited to committed implementation, automated tests, and the recorded
 real Stripe test-mode probe.
+
+## Requirement / proof matrix
+
+| Requirement area | Status | Primary proof |
+|---|---|---|
+| Exactly-once metering, replay, concurrency, rejected-key retry | PASS | `tests/test_stage_b.py` idempotency/quota tests |
+| Quota boundaries, 429/402, monthly rollup | PASS | `tests/test_stage_b.py`; `tests/test_stage_d.py` |
+| API-call and four-bucket token pricing, reasoning rule | PASS | `tests/test_stage_d.py`; `app/services/pricing.py` |
+| Checkout, raw-signature verification, replay dedupe, subscription lifecycle | PASS | `tests/test_stage_c.py`; recorded real Stripe probe below |
+| Tenant API-key isolation | PASS | `tests/test_auth.py` |
+| Persistence and fresh Alembic schema | PASS | `tests/test_migrations.py` |
+| Background execution, retry, final failure alert | PASS | `tests/test_background_jobs.py` |
+| Documentation/configuration/secrets | PASS | `README.md`, `BUILDLOG.md`, `capstone.yaml`, repository secret sweep |
 
 ## Item 4 acceptance - tenant API-key isolation
 
@@ -15,7 +28,7 @@ real Stripe test-mode probe.
 | Cross-tenant `/generate` rejected | PASS | `tests/test_auth.py::test_generate_cannot_cross_tenant_boundary` |
 | Cross-tenant checkout rejected | PASS | `tests/test_auth.py::test_checkout_cannot_cross_tenant_boundary` |
 | Webhook remains independently authenticated | PASS | `tests/test_auth.py::test_webhook_remains_signature_authenticated_only` |
-| Full regression | PASS | `85 passed` |
+| Full regression | PASS | `86 passed` |
 
 Tenant API keys are stored only as SHA-256 hashes. Isolation tests use different
 tenant IDs and different API keys.
@@ -40,7 +53,7 @@ tenant IDs and different API keys.
   genuine pre-Alembic revision or migration snapshot. The baseline is honest
   about that limitation; existing databases from the prior `create_all`-only
   implementation may require explicit recreation or manual migration.
-- Full regression after migration work: **PASS** - `85 passed`.
+- Full regression after migration work: **PASS** - `86 passed`.
 
 ## Section 6 Checklist
 
@@ -181,9 +194,10 @@ After successful payment and webhook processing, Stripe redirected to:
 http://localhost:8000/
 ~~~
 
-The root route is not implemented, so it returned HTTP 404. This happened
-after successful payment and after the webhook had upgraded Tenant 1 to Pro; it
-did not prevent checkout completion or subscription persistence.
+The final implementation includes a minimal `GET /` status response, so the
+configured Checkout success redirect has a valid target. The earlier live probe
+recorded the pre-fix HTTP 404; that historical observation is retained rather
+than presented as current behavior.
 
 ## Acceptance Probes
 

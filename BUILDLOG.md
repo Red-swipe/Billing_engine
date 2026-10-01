@@ -356,5 +356,14 @@ the legitimate event returned HTTP 200 `duplicate`; exactly one
 database is at Alembic head `20260930_0001`, and
 `ix_usage_events_tenant_created_at` was verified as `(tenant_id, created_at)`.
 
-Final regression result: 85 passed, 1 warning. The existing Starlette/httpx
+Final regression result: 86 passed, 1 warning. The existing Starlette/httpx
 deprecation warning remains non-functional.
+
+## 2026-10-02 - Final audit corrections
+
+The final audit found two small integration gaps: the Stripe success URL was
+`/` but the API only exposed `/health`, and subscription deletion canceled the
+subscription row without synchronizing the tenant status. Added the minimal
+root status endpoint, set deleted-subscription tenants to `inactive`, and added
+regression coverage for both tenant and subscription state. No billing flow or
+parallel implementation was introduced.

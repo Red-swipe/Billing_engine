@@ -55,6 +55,7 @@ app/
     quota.py           UTC calendar-month window, aggregation, limit checks
     usage_service.py   The only writer of usage_events; locking and replay
     stripe_service.py  Checkout, signature verification, and webhook sync
+  main.py              GET / and /health status endpoints
 seed.py                Idempotent database initialization
 tests/                 pytest suite
 ```
@@ -139,6 +140,8 @@ uvicorn app.main:app --reload
 ```
 
 The API is then at `http://127.0.0.1:8000`, with interactive docs at `/docs`.
+`GET /` and `GET /health` return a small service-status JSON response; the root
+route is also the Stripe Checkout success redirect target.
 
 ## API endpoints
 
@@ -250,7 +253,7 @@ pytest -q
 ```
 
 ```
-85 passed
+86 passed
 ```
 
 The suite runs against a throwaway SQLite database per test, created under the
@@ -303,7 +306,7 @@ credentials and the Stripe CLI.
 | Tenant creation, automatic Free subscription | Implemented |
 | `POST /generate` metering, idempotency, quota | Implemented |
 | `GET /usage/{tenant_id}` monthly rollup | Implemented |
-| Test suite (Items 1-7) | 85 passed |
+| Test suite (Items 1-7) | 86 passed |
 | `GET /checkout/{tenant_id}` | Implemented; API-key protected |
 | `POST /webhooks/stripe` | Implemented |
 | Background usage-cost reconciliation | Implemented with bounded retries and failure alert |

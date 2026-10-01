@@ -225,6 +225,7 @@ def _apply_subscription_state(
         tenant.status = "active"
     else:
         subscription.status = "canceled"
+        tenant.status = "inactive"
 
     subscription.stripe_subscription_id = _get(sub_obj, "id")
     subscription.current_period_start = _epoch_to_naive_utc(

@@ -23,3 +23,9 @@ app.include_router(webhooks.router)
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/")
+def root() -> dict[str, str]:
+    """Minimal Checkout success target and service status response."""
+    return {"status": "ok", "service": "billing-engine"}

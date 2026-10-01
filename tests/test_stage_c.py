@@ -28,6 +28,12 @@ def pro_plan(session) -> Plan:
 # --------------------------------------------------------------- Checkout
 
 
+def test_root_is_checkout_success_target(client):
+    response = client.get("/")
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "service": "billing-engine"}
+
+
 def test_checkout_creates_session_for_free_tenant(client, session, stripe_settings):
     tenant_id, _ = make_tenant(client)
     fake = MagicMock(id="cs_test_123", url="https://checkout.stripe.com/c/pay/cs_test_123")
@@ -355,7 +361,9 @@ def test_subscription_deleted_marks_inactive_and_blocks_generate(
     sub = session.execute(
         select(Subscription).where(Subscription.tenant_id == tenant_id)
     ).scalar_one()
+    tenant = session.get(Tenant, tenant_id)
     assert sub.status == "canceled"
+    assert tenant.status == "inactive"
     # The row is kept, not deleted.
     assert session.execute(select(func.count(Subscription.id))).scalar_one() == 1
 
