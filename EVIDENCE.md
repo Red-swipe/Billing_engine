@@ -52,10 +52,10 @@ tenant IDs and different API keys.
 | 4. Monthly usage rolls into cost | PASS | `tests/test_stage_d.py::test_usage_cost_includes_api_calls_and_uses_month_window`; `GET /usage/{tenant_id}` | Monthly API calls and token buckets are aggregated in the UTC half-open window; cost is token cost plus configured API-call cost, with previous-month rows excluded. |
 | 5. Token pricing rules | PASS | `tests/test_stage_d.py` pricing tests | Input is $0.00025/1k, cached input is $0.000025/1k, output is $0.00075/1k; reasoning is charged once at the output rate; results are deterministic integer cents. |
 | 6. Pricing pinned in configuration | PASS | `app/config.py`; `tests/test_stage_d.py::test_pricing_rates_are_pinned_in_settings`; `test_configured_api_call_price_is_added_as_integer_cents` | Token rates and `API_CALL_PRICE_CENTS` are Settings fields loaded from environment-configurable values and consumed by the pricing function. |
-| 7. Checkout works end-to-end in Stripe test mode | PASS | Recorded real Stripe test-mode probe; Stripe CLI forwarding evidence | Real Stripe Checkout completed successfully for Tenant 2 in test mode. |
+| 7. Checkout works end-to-end in Stripe test mode | PASS | Recorded final real Stripe test-mode probe | Real Stripe Checkout completed successfully for Tenant 1 in test mode. |
 | 8. Webhooks verify signatures | PASS | Real forged-signature probe; test_forged_signature_returns_400_and_writes_nothing; test_signature_from_wrong_secret_is_rejected | Forged signature returned HTTP 400 and changed no database state. |
 | 9. Webhooks deduplicate events | PASS | Real replay probe; test_replay_same_event_twice_processes_once; test_duplicate_delivery_does_not_reapply_business_operation | Replays returned HTTP 200 duplicate. Exactly one stripe_events row existed and no duplicate subscription was created. |
-| 10. Webhooks update the subscription/plan | PASS | Real checkout.session.completed probe; test_checkout_session_completed_upgrades_to_pro; test_subscription_updated_syncs_state; test_subscription_deleted_marks_inactive_and_blocks_generate | The real completed-checkout event changed Tenant 2 to Pro with an active subscription. customer.subscription.updated was not observed during the real checkout probe; lifecycle behavior is covered by automated tests. |
+| 10. Webhooks update the subscription/plan | PASS | Real checkout.session.completed probe; test_checkout_session_completed_upgrades_to_pro; test_subscription_updated_syncs_state; test_subscription_deleted_marks_inactive_and_blocks_generate | The final real completed-checkout event changed Tenant 1 to Pro with an active subscription. customer.subscription.updated was not observed during the final real checkout probe; lifecycle behavior is covered by automated tests. |
 | 11. Real persistence | PASS | SQLite models/database; fresh-clone evidence; real Stripe probe | Plans, tenants, usage events, Stripe events, customers, and subscriptions persist in SQLite across requests. |
 | 12. Tenant data isolation | PASS | `tests/test_auth.py`; `app/auth.py`; protected generate/usage/checkout routes | Tenant API keys are hashed, authenticated tenants are authoritative, and cross-tenant body/URL access is rejected. |
 | 13. Required database/index behavior | PASS | app/models.py; test_concurrent_identical_keys_create_exactly_one_event; SQLite schema evidence | Primary keys, foreign keys, unique email/customer/event/idempotency constraints, and indexes for tenant/event timestamps are present. |
@@ -89,6 +89,8 @@ tenant IDs and different API keys.
 
 ## Final Real Stripe Evidence - 2026-10-01
 
+The October 1 Tenant 1 run is the authoritative final Stripe evidence.
+
 Recorded from the real Stripe test-mode checkout and fresh Alembic database probe:
 
 ~~~text
@@ -120,7 +122,7 @@ Database unchanged: PASS
 ~~~
 
 The exact stored payload for the real event was sent with an intentionally
-invalid signature. The event count and Tenant 2 subscription/plan state were
+invalid signature. The event count and Tenant 1 subscription/plan state were
 unchanged.
 
 ### Replay / Deduplication
@@ -146,7 +148,7 @@ http://localhost:8000/
 ~~~
 
 The root route is not implemented, so it returned HTTP 404. This happened
-after successful payment and after the webhook had upgraded Tenant 2 to Pro; it
+after successful payment and after the webhook had upgraded Tenant 1 to Pro; it
 did not prevent checkout completion or subscription persistence.
 
 ## Acceptance Probes
@@ -173,9 +175,10 @@ Rejected request creates zero usage rows: PASS
 The same boundary behavior is covered by test_api_quota_boundary_at_limit.
 Token quota behavior is covered by test_token_quota_boundary_at_limit.
 
-### Probe 3 - Real Stripe
+### Probe 3 - Earlier real Stripe probe (Tenant 2)
 
-Free Tenant 2 used real Stripe test-mode Checkout, completed payment, received
+The earlier September 30 probe used Free Tenant 2 for real Stripe test-mode
+Checkout, completed payment, received
 checkout.session.completed, and was updated to an active Pro subscription.
 The persisted customer and subscription were confirmed, and GET /usage/2
 returned HTTP 200 with plan Pro.

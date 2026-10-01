@@ -13,7 +13,7 @@ the job name, job identifier, attempt count, and failure reason. This is an
 in-process background task, not production-grade distributed queue
 infrastructure.
 
-This repository is at **Item 7 (usage cost and quota response handling)**.
+This repository is complete through **Items 1-7**.
 Monthly usage cost is calculated deterministically from usage events and
 returned as integer cents.
 
@@ -252,7 +252,7 @@ pytest -q
 ```
 
 ```
-70 passed
+85 passed
 ```
 
 The suite runs against a throwaway SQLite database per test, created under the

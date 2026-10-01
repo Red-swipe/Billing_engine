@@ -356,5 +356,5 @@ the legitimate event returned HTTP 200 `duplicate`; exactly one
 database is at Alembic head `20260930_0001`, and
 `ix_usage_events_tenant_created_at` was verified as `(tenant_id, created_at)`.
 
-Final regression inventory: 85 tests collected; the existing Starlette/httpx
+Final regression result: 85 passed, 1 warning. The existing Starlette/httpx
 deprecation warning remains non-functional.
