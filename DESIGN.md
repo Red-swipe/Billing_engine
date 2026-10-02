@@ -161,7 +161,7 @@ rejected. The check is `used + requested > limit`, not `>=`.
 | `POST /tenants` | Implemented (incl. automatic active Free subscription) |
 | `POST /generate` | Implemented (header idempotency, quota before insert, exact replay) |
 | `GET /usage/{tenant_id}` | Implemented (UTC calendar month) |
-| `GET /checkout/{tenant_id}` | Implemented; Stripe-configured checkout session creation. |
+| `POST /checkout/{tenant_id}` | Implemented; Stripe-configured checkout session creation. |
 | `POST /webhooks/stripe` | Implemented; raw-body verification and deduplicated sync. |
 | Pricing / cost calculation | Implemented as deterministic `cost_cents` derived from usage events; no cost is stored per request. |
 | `stripe_events` table | Implemented unique event claim and processed marker. |
@@ -371,7 +371,7 @@ of truth; cost is not persisted, so it cannot become stale or be double-counted.
 }
 ```
 
-### `GET /checkout/{tenant_id}`
+### `POST /checkout/{tenant_id}`
 
 Create a Stripe Checkout Session for the tenant's pending plan change and
 return the redirect URL.

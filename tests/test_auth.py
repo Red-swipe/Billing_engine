@@ -55,6 +55,20 @@ def test_checkout_cannot_cross_tenant_boundary(client, stripe_settings):
         ).status_code == 200
 
 
+def test_checkout_post_endpoint_is_supported(client, stripe_settings):
+    tenant_id, api_key = make_tenant(client, email="checkout-post@example.com")
+    with patch("app.services.stripe_service.stripe") as stripe:
+        stripe.Customer.create.return_value = MagicMock(id="cus_post")
+        stripe.checkout.Session.create.return_value = MagicMock(
+            id="cs_post", url="https://checkout.stripe.com/post"
+        )
+        response = client.post(
+            f"/checkout/{tenant_id}", headers={"X-API-Key": api_key}
+        )
+    assert response.status_code == 200, response.text
+    assert response.json()["checkout_session_id"] == "cs_post"
+
+
 def test_webhook_remains_signature_authenticated_only(client, stripe_settings):
     from tests.stripe_helpers import checkout_completed_event, signed_headers
 

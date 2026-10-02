@@ -1,7 +1,7 @@
 run: uvicorn app.main:app --reload
 seed: alembic upgrade head && python seed.py
 test: pytest -q
-test_result: 86 passed
+test_result: 87 passed
 base_url: http://localhost:8000
 endpoints:
   - method: POST
@@ -10,7 +10,7 @@ endpoints:
     path: /generate
   - method: GET
     path: /usage/{tenant_id}
-  - method: GET
+  - method: POST
     path: /checkout/{tenant_id}
   - method: POST
     path: /webhooks/stripe

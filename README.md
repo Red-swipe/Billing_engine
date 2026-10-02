@@ -49,7 +49,7 @@ app/
     tenants.py         POST /tenants
     generate.py        POST /generate
     usage.py           GET /usage/{tenant_id}
-    checkout.py        GET /checkout/{tenant_id}
+    checkout.py        POST /checkout/{tenant_id} (GET compatibility alias)
     webhooks.py        POST /webhooks/stripe
   services/
     quota.py           UTC calendar-month window, aggregation, limit checks
@@ -253,7 +253,7 @@ pytest -q
 ```
 
 ```
-86 passed
+87 passed
 ```
 
 The suite runs against a throwaway SQLite database per test, created under the
@@ -267,7 +267,7 @@ Verified results are recorded in [EVIDENCE.md](EVIDENCE.md).
 
 ## Stripe integration
 
-`GET /checkout/{tenant_id}` creates a subscription-mode Checkout Session for a
+`POST /checkout/{tenant_id}` creates a subscription-mode Checkout Session for a
 Free tenant using `STRIPE_PRO_PRICE_ID`. It creates one Stripe customer on the
 first request, persists the customer ID, and reuses it on later requests.
 Checkout requires the API key belonging to the URL tenant. The seeded
@@ -306,8 +306,8 @@ credentials and the Stripe CLI.
 | Tenant creation, automatic Free subscription | Implemented |
 | `POST /generate` metering, idempotency, quota | Implemented |
 | `GET /usage/{tenant_id}` monthly rollup | Implemented |
-| Test suite (Items 1-7) | 86 passed |
-| `GET /checkout/{tenant_id}` | Implemented; API-key protected |
+| Test suite (Items 1-7) | 87 passed |
+| `POST /checkout/{tenant_id}` | Implemented; API-key protected (GET compatibility alias) |
 | `POST /webhooks/stripe` | Implemented |
 | Background usage-cost reconciliation | Implemented with bounded retries and failure alert |
 | Pricing / monthly cost calculation | Implemented (`cost_cents`) |
@@ -316,7 +316,7 @@ credentials and the Stripe CLI.
 
 ### Tenant API-key authentication
 
-`POST /generate`, `GET /usage/{tenant_id}`, and `GET /checkout/{tenant_id}`
+`POST /generate`, `GET /usage/{tenant_id}`, and `POST /checkout/{tenant_id}`
 require `X-API-Key`. Cross-tenant body and URL IDs are rejected. The Stripe
 webhook is intentionally excluded and remains signature-authenticated. This
 repository includes a baseline Alembic migration for the current schema. A

@@ -1,8 +1,8 @@
-"""GET /checkout/{tenant_id} — create a Stripe Checkout Session for the Pro plan.
+"""POST /checkout/{tenant_id} - create a Stripe Checkout Session for the Pro plan.
 
-Note this is a GET because the brief specifies it. It does mutate state (it may
-create a Stripe customer), which is unusual REST; a POST would be more correct
-in general, but the endpoint shape here is fixed by the specification.
+The submission contract uses POST because this operation may create and persist
+a Stripe customer. GET remains registered as a compatibility alias for clients
+that used the earlier implementation.
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -21,7 +21,7 @@ from app.services.stripe_service import (
 router = APIRouter(tags=["checkout"])
 
 
-@router.get("/checkout/{tenant_id}")
+@router.api_route("/checkout/{tenant_id}", methods=["POST", "GET"])
 def create_checkout(
     tenant_id: int,
     db: Session = Depends(get_db),

@@ -6,7 +6,7 @@ Design notes
 tenant is identified only from data this application itself wrote:
 
 1. `checkout.session.completed` resolves the tenant from the Checkout Session's
-   ``metadata.tenant_id``, which ``GET /checkout/{tenant_id}`` wrote at session
+   ``metadata.tenant_id``, which ``POST /checkout/{tenant_id}`` wrote at session
    creation time. It falls back to ``client_reference_id`` and finally to
    ``customer`` -> ``tenants.stripe_customer_id``.
 2. ``customer.subscription.*`` events carry no session metadata, so they resolve

@@ -367,3 +367,16 @@ subscription row without synchronizing the tenant status. Added the minimal
 root status endpoint, set deleted-subscription tenants to `inactive`, and added
 regression coverage for both tenant and subscription state. No billing flow or
 parallel implementation was introduced.
+
+## 2026-10-02 - Final submission lock verification
+
+Aligned the Stripe Checkout route with the capstone contract by exposing
+`POST /checkout/{tenant_id}` while retaining the existing GET form as a
+compatibility alias. Added a focused POST-route regression test and updated the
+current README, DESIGN, `.env.example`, `capstone.yaml`, and evidence references
+to identify POST as authoritative.
+
+Final verification used the repository virtual environment and an isolated
+SQLite database: Alembic upgrade succeeded, `seed.py` created the two required
+plans and development tenant, and the complete suite passed with `87 passed, 1
+warning`. The warning is the existing Starlette/httpx deprecation warning.

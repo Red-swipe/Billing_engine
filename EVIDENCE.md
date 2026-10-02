@@ -1,7 +1,7 @@
 # Section 6 Acceptance Evidence
 
 This document is an examiner-facing acceptance checklist for the current
-repository. The current full regression result is **86 passed**. Claims below
+repository. The current full regression result is **87 passed**. Claims below
 are limited to committed implementation, automated tests, and the recorded
 real Stripe test-mode probe.
 
@@ -28,7 +28,7 @@ real Stripe test-mode probe.
 | Cross-tenant `/generate` rejected | PASS | `tests/test_auth.py::test_generate_cannot_cross_tenant_boundary` |
 | Cross-tenant checkout rejected | PASS | `tests/test_auth.py::test_checkout_cannot_cross_tenant_boundary` |
 | Webhook remains independently authenticated | PASS | `tests/test_auth.py::test_webhook_remains_signature_authenticated_only` |
-| Full regression | PASS | `86 passed` |
+| Full regression | PASS | `87 passed` |
 
 Tenant API keys are stored only as SHA-256 hashes. Isolation tests use different
 tenant IDs and different API keys.
@@ -53,7 +53,7 @@ tenant IDs and different API keys.
   genuine pre-Alembic revision or migration snapshot. The baseline is honest
   about that limitation; existing databases from the prior `create_all`-only
   implementation may require explicit recreation or manual migration.
-- Full regression after migration work: **PASS** - `86 passed`.
+- Full regression after migration work: **PASS** - `87 passed`.
 
 ## Section 6 Checklist
 
@@ -274,8 +274,37 @@ Tenant plan
 
 ~~~text
 .\\venv\\Scripts\\python.exe -m pytest -q
-85 passed
+87 passed
 ~~~
 
 The suite completes with one existing Starlette/httpx deprecation warning.
 The warning does not affect the result.
+
+## 2026-10-02 - Final clean-machine verification
+
+The complete suite was run from the repository virtual environment with an
+isolated writable temporary directory:
+
+~~~text
+.\\venv\\Scripts\\python.exe -m pytest -q
+87 passed, 1 warning in 114.47s
+~~~
+
+An empty isolated SQLite database was then created and verified with:
+
+~~~text
+alembic upgrade head
+python seed.py
+~~~
+
+The resulting schema contained `plans`, `tenants`, `subscriptions`,
+`usage_events`, `stripe_events`, and `alembic_version`. Seeding produced the
+Free plan (1,000 API calls / 100,000 tokens), the Pro plan (50,000 API calls /
+5,000,000 tokens), and the documented development tenant.
+
+The isolated smoke test observed `GET /` 200, `GET /health` 200,
+`POST /tenants` 201, `POST /generate` 200, `GET /usage/{tenant_id}` 200,
+`POST /checkout/{tenant_id}` 503 when Stripe is intentionally unconfigured,
+and a forged `POST /webhooks/stripe` 400. The POST checkout route is now the
+authoritative submission endpoint; the prior GET form remains as a compatibility
+alias for existing clients.
