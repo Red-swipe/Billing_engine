@@ -1,7 +1,7 @@
 # Section 6 Acceptance Evidence
 
 This document is an examiner-facing acceptance checklist for the current
-repository. The current full regression result is **87 passed**. Claims below
+repository. The current full regression result is **88 passed**. Claims below
 are limited to committed implementation, automated tests, and the recorded
 real Stripe test-mode probe.
 
@@ -28,7 +28,7 @@ real Stripe test-mode probe.
 | Cross-tenant `/generate` rejected | PASS | `tests/test_auth.py::test_generate_cannot_cross_tenant_boundary` |
 | Cross-tenant checkout rejected | PASS | `tests/test_auth.py::test_checkout_cannot_cross_tenant_boundary` |
 | Webhook remains independently authenticated | PASS | `tests/test_auth.py::test_webhook_remains_signature_authenticated_only` |
-| Full regression | PASS | `87 passed` |
+| Full regression | PASS | `88 passed` |
 
 Tenant API keys are stored only as SHA-256 hashes. Isolation tests use different
 tenant IDs and different API keys.
@@ -36,7 +36,8 @@ tenant IDs and different API keys.
 ### Database Persistence / Alembic Migration Evidence
 
 - Migration chain exists: **PASS** — `alembic/versions/20260930_0001_initial_schema.py`
-  is the current baseline and `alembic heads` resolves to `20260930_0001`.
+  and `alembic/versions/20261002_0002_tenant_scoped_idempotency.py`; `alembic heads`
+  resolves to `20261002_0002`.
 - Fresh database created through Alembic: **PASS** —
   `tests/test_migrations.py::test_fresh_database_is_created_by_alembic_and_has_required_schema`
   runs `alembic upgrade head` against an isolated empty SQLite database.
@@ -46,6 +47,8 @@ tenant IDs and different API keys.
 - Required index verified: **PASS** — the test verifies
   `ix_usage_events_tenant_created_at` contains `(tenant_id, created_at)` in
   that order.
+- Required constraints verified: **PASS** — the test verifies composite uniqueness
+  `uq_usage_events_tenant_idempotency_key` on `(tenant_id, idempotency_key)`.
 - Application compatibility: **PASS** —
   `tests/test_migrations.py::test_application_can_use_schema_created_by_alembic`
   creates a tenant through the API using the migrated database.
@@ -53,13 +56,13 @@ tenant IDs and different API keys.
   genuine pre-Alembic revision or migration snapshot. The baseline is honest
   about that limitation; existing databases from the prior `create_all`-only
   implementation may require explicit recreation or manual migration.
-- Full regression after migration work: **PASS** - `87 passed`.
+- Full regression after migration work: **PASS** - `88 passed`.
 
 ## Section 6 Checklist
 
 | Requirement | Status | Evidence / Test | Observed result |
 |---|---|---|---|
-| 1. One usage event per action, deduped by key | PASS | test_generate_creates_exactly_one_usage_event; test_same_key_twice_returns_identical_response_and_one_row; test_concurrent_identical_keys_create_exactly_one_event | One successful action creates one usage_events row. Replays return the stored result and do not add a row. |
+| 1. One usage event per action, deduped by key | PASS | test_generate_creates_exactly_one_usage_event; test_same_key_twice_returns_identical_response_and_one_row; test_same_idempotency_key_is_independent_per_tenant; test_concurrent_identical_keys_create_exactly_one_event | One successful action creates one usage_events row. Replays return the stored result and do not add a row. Keys are isolated per tenant. |
 | 2. Quota checked before action | PASS | test_api_quota_boundary_at_limit; test_token_quota_boundary_at_limit; app/services/usage_service.py | Quota is checked before insert. Rejected requests create zero usage rows and leave the rejected key retryable. |
 | 3. 429 / 402 clear error responses | PASS | `tests/test_stage_b.py::test_api_quota_boundary_at_limit`; inactive-subscription tests; `app/routes/generate.py` | 429 and 402 retain distinct structured errors; quota 429 now includes a non-negative integer `Retry-After` until the UTC month reset. |
 | 4. Monthly usage rolls into cost | PASS | `tests/test_stage_d.py::test_usage_cost_includes_api_calls_and_uses_month_window`; `GET /usage/{tenant_id}` | Monthly API calls and token buckets are aggregated in the UTC half-open window; cost is token cost plus configured API-call cost, with previous-month rows excluded. |
@@ -71,13 +74,13 @@ tenant IDs and different API keys.
 | 10. Webhooks update the subscription/plan | PASS | Real checkout.session.completed probe; test_checkout_session_completed_upgrades_to_pro; test_subscription_updated_syncs_state; test_subscription_deleted_marks_inactive_and_blocks_generate | The final real completed-checkout event changed Tenant 1 to Pro with an active subscription. customer.subscription.updated was not observed during the final real checkout probe; lifecycle behavior is covered by automated tests. |
 | 11. Real persistence | PASS | SQLite models/database; fresh-clone evidence; real Stripe probe | Plans, tenants, usage events, Stripe events, customers, and subscriptions persist in SQLite across requests. |
 | 12. Tenant data isolation | PASS | `tests/test_auth.py`; `app/auth.py`; protected generate/usage/checkout routes | Tenant API keys are hashed, authenticated tenants are authoritative, and cross-tenant body/URL access is rejected. |
-| 13. Required database/index behavior | PASS | app/models.py; test_concurrent_identical_keys_create_exactly_one_event; SQLite schema evidence | Primary keys, foreign keys, unique email/customer/event/idempotency constraints, and indexes for tenant/event timestamps are present. |
+| 13. Required database/index behavior | PASS | app/models.py; test_concurrent_identical_keys_create_exactly_one_event; SQLite schema evidence | Primary keys, foreign keys, unique email/customer/event/idempotency constraints (including `UNIQUE(tenant_id, idempotency_key)`), and indexes for tenant/event timestamps are present. |
 | 14. Layered architecture | PASS | app/routes, app/services, app/models.py, app/database.py | FastAPI routes handle transport/validation, services handle metering/pricing/Stripe logic, and SQLAlchemy models/database handle persistence. |
 | 15. Validation / clean 4xx responses | PASS | test_invalid_payloads_rejected_without_creating_events; test_unknown_tenant_is_404; checkout/webhook negative-path tests | Invalid payloads are rejected without usage rows; unknown tenants return 404; inactive subscriptions return 402; quota exhaustion returns 429; invalid webhook signatures return 400. |
-| 16. Idempotency | PASS | Metering replay tests and Stripe replay tests listed above | Client-supplied X-Idempotency-Key makes metering replay the original status/body; Stripe event IDs make webhook processing exactly-once. |
+| 16. Idempotency | PASS | Metering replay tests and Stripe replay tests listed above | Client-supplied X-Idempotency-Key makes metering replay the original status/body (tenant-scoped); Stripe event IDs make webhook processing exactly-once. |
 | 17. Secrets hygiene | PASS | app/config.py; checkout secret-response test; repository history/status checks | Stripe credentials are loaded from environment variables, the secret key is not returned by checkout, and runtime secret/database/log files were not staged in the checkpoint commits. |
 | 18. Background job with retries/failure alert | PASS | `tests/test_background_jobs.py`; `app/services/background_jobs.py` | Usage-cost reconciliation is scheduled with FastAPI BackgroundTasks, retries are bounded/configurable, and one structured alert is emitted only after final failure. |
-| 19. Schema migrations | PASS with historical limitation | `alembic.ini`; `alembic/env.py`; `alembic/versions/20260930_0001_initial_schema.py`; `tests/test_migrations.py` | Fresh schema and application compatibility are verified through Alembic. No genuine pre-Alembic revision exists, so an upgrade from the old `create_all`-only schema is not claimed. |
+| 19. Schema migrations | PASS with historical limitation | `alembic.ini`; `alembic/env.py`; `alembic/versions/20260930_0001_initial_schema.py`; `alembic/versions/20261002_0002_tenant_scoped_idempotency.py`; `tests/test_migrations.py` | Fresh schema and application compatibility are verified through Alembic up to head `20261002_0002`. No genuine pre-Alembic revision exists, so an upgrade from the old `create_all`-only schema is not claimed. |
 
 ### Item 7 — Cost Calculation / Pricing / Retry-After Evidence
 
@@ -205,10 +208,15 @@ than presented as current behavior.
 
 The same X-Idempotency-Key was submitted twice to POST /generate. Both
 responses were HTTP 200 with identical response bytes and the same
-usage_event_id; exactly one usage row existed. Evidence:
-test_same_key_twice_returns_identical_response_and_one_row,
-test_first_and_replay_response_bytes_are_identical, and
-test_first_response_matches_stored_body_exactly.
+usage_event_id; exactly one usage row existed. Idempotency is strictly
+scoped per tenant via `UNIQUE(tenant_id, idempotency_key)`: two different tenants
+using the same idempotency key create independent usage rows without collision,
+and replaying the key for either tenant returns that tenant's original stored response.
+Evidence:
+`test_same_key_twice_returns_identical_response_and_one_row`,
+`test_same_idempotency_key_is_independent_per_tenant`,
+`test_first_and_replay_response_bytes_are_identical`, and
+`test_first_response_matches_stored_body_exactly`.
 
 ### Probe 2 - Quota Boundary
 
@@ -273,8 +281,8 @@ Tenant plan
 ## Current Regression
 
 ~~~text
-.\\venv\\Scripts\\python.exe -m pytest -q
-87 passed
+.\venv\Scripts\python.exe -m pytest -q
+88 passed
 ~~~
 
 The suite completes with one existing Starlette/httpx deprecation warning.
@@ -286,8 +294,8 @@ The complete suite was run from the repository virtual environment with an
 isolated writable temporary directory:
 
 ~~~text
-.\\venv\\Scripts\\python.exe -m pytest -q
-87 passed, 1 warning in 114.47s
+.\venv\Scripts\python.exe -m pytest -q
+88 passed, 1 warning
 ~~~
 
 An empty isolated SQLite database was then created and verified with:
@@ -297,14 +305,22 @@ alembic upgrade head
 python seed.py
 ~~~
 
+Alembic reached head `20261002_0002` ("Scope usage-event idempotency to each tenant").
 The resulting schema contained `plans`, `tenants`, `subscriptions`,
-`usage_events`, `stripe_events`, and `alembic_version`. Seeding produced the
-Free plan (1,000 API calls / 100,000 tokens), the Pro plan (50,000 API calls /
-5,000,000 tokens), and the documented development tenant.
+`usage_events`, `stripe_events`, and `alembic_version`. The table `usage_events`
+was verified to contain composite uniqueness `uq_usage_events_tenant_idempotency_key`
+on `(tenant_id, idempotency_key)` and composite index `ix_usage_events_tenant_created_at`
+on `(tenant_id, created_at)`. Seeding produced the Free plan (1,000 API calls / 100,000 tokens),
+the Pro plan (50,000 API calls / 5,000,000 tokens), and the documented development tenant.
 
-The isolated smoke test observed `GET /` 200, `GET /health` 200,
-`POST /tenants` 201, `POST /generate` 200, `GET /usage/{tenant_id}` 200,
-`POST /checkout/{tenant_id}` 503 when Stripe is intentionally unconfigured,
-and a forged `POST /webhooks/stripe` 400. The POST checkout route is now the
-authoritative submission endpoint; the prior GET form remains as a compatibility
-alias for existing clients.
+The isolated smoke test observed:
+- `GET /health` -> 200
+- `POST /tenants` -> 201
+- `POST /generate` (Tenant 1) -> 200
+- `POST /generate` (Tenant 2 with same idempotency key) -> 200 (independent usage event)
+- `POST /generate` (Tenant 1 replay with same key) -> 200 (exact original response replayed)
+- `GET /usage/1` -> 200
+- `POST /checkout/1` -> 200 (Stripe test-mode checkout session)
+- `POST /webhooks/stripe` (missing signature) -> 400
+
+The POST checkout route is the authoritative submission endpoint; the prior GET form remains as a compatibility alias.

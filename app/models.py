@@ -71,7 +71,11 @@ class Subscription(Base):
 class UsageEvent(Base):
     __tablename__ = "usage_events"
     __table_args__ = (
-        UniqueConstraint("idempotency_key", name="uq_usage_events_idempotency_key"),
+        UniqueConstraint(
+            "tenant_id",
+            "idempotency_key",
+            name="uq_usage_events_tenant_idempotency_key",
+        ),
         Index("ix_usage_events_tenant_created_at", "tenant_id", "created_at"),
     )
 

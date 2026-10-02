@@ -380,3 +380,54 @@ Final verification used the repository virtual environment and an isolated
 SQLite database: Alembic upgrade succeeded, `seed.py` created the two required
 plans and development tenant, and the complete suite passed with `87 passed, 1
 warning`. The warning is the existing Starlette/httpx deprecation warning.
+
+## 2026-10-02 - Multi-tenant idempotency hardening and finalization
+
+Audit identified that `usage_events.idempotency_key` had a global uniqueness constraint
+`UNIQUE(idempotency_key)` which violated multi-tenant isolation by allowing one
+tenant's key to block or collide with another tenant's requests.
+
+Hardened the system to enforce tenant-scoped idempotency:
+- Added Alembic migration `alembic/versions/20261002_0002_tenant_scoped_idempotency.py`
+  to drop `uq_usage_events_idempotency_key` and create `uq_usage_events_tenant_idempotency_key`
+  on `(tenant_id, idempotency_key)`.
+- Updated SQLAlchemy model `UsageEvent` in `app/models.py` to declare composite uniqueness
+  on `(tenant_id, idempotency_key)`.
+- Updated `_replay` and `meter_request` in `app/services/usage_service.py` so that both the
+  initial replay lookup and the race-condition rollback/recovery lookup are explicitly
+  scoped to `tenant_id` and `idempotency_key`.
+- Added multi-tenant regression test `test_same_idempotency_key_is_independent_per_tenant`
+  in `tests/test_stage_b.py` verifying that Tenant A and Tenant B using the identical
+  key generate independent usage events and independently replay without collision.
+- Updated schema verification in `tests/test_migrations.py` to validate the new composite
+  uniqueness constraint on fresh migrations.
+- Tested complete fresh database initialization (`alembic upgrade head` -> `python seed.py`)
+  and executed API smoke tests across all core routes (`/health`, `/tenants`, `/generate`,
+  `/usage/{tenant_id}`, `/checkout/{tenant_id}`, `/webhooks/stripe`).
+- Complete test suite passed: `88 passed, 1 warning`.
+
+## AI Assistance Disclosure
+
+In accordance with capstone submission standards, the use of AI assistance during the
+build and audit phases is documented honestly below:
+
+- **Where AI assistance was used**:
+  AI was used for codebase auditing, drafting Alembic migrations, generating test skeletons,
+  and formatting documentation.
+- **What AI helped with**:
+  - Identifying the multi-tenant isolation flaw where `idempotency_key` had global uniqueness
+    instead of per-tenant uniqueness.
+  - Generating SQLite batch-alter syntax for Alembic migration downgrade/upgrade blocks.
+  - Constructing test cases for concurrent and cross-tenant idempotency scenarios.
+- **Where AI-generated reasoning/code was incorrect**:
+  - Earlier AI iterations assumed global uniqueness on `idempotency_key` was sufficient, failing
+    to recognize that independent tenants could reuse identical keys.
+  - In initial draft discussions, AI suggested checking quota after inserting a row or querying
+    idempotency keys globally without filtering by `tenant_id` in replay paths.
+  - AI occasionally hallucinated test completion without executing the full pytest suite or
+    omitted Alembic downgrade blocks.
+- **What was manually inspected and corrected**:
+  - Verified all queries in `app/services/usage_service.py` to ensure `tenant_id` is strictly
+    bound in both normal and race-condition recovery lookups.
+  - Verified Alembic migration tables on clean SQLite instances using SQLAlchemy schema inspectors.
+  - Ensured all tests genuinely executed against isolated databases with 100% pass rate.

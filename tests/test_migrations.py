@@ -57,6 +57,16 @@ def test_fresh_database_is_created_by_alembic_and_has_required_schema(db_dir, mo
             "tenant_id",
             "created_at",
         ]
+        unique_constraints = {
+            constraint["name"]: constraint["column_names"]
+            for constraint in database_inspector.get_unique_constraints("usage_events")
+        }
+        assert unique_constraints == {
+            "uq_usage_events_tenant_idempotency_key": [
+                "tenant_id",
+                "idempotency_key",
+            ]
+        }
     finally:
         engine.dispose()
 

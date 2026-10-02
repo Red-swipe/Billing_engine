@@ -80,10 +80,14 @@ Seed rows:
 | `cached_input_tokens` | int | NOT NULL, DEFAULT 0 | |
 | `output_tokens` | int | NOT NULL, DEFAULT 0 | |
 | `reasoning_tokens` | int | NOT NULL, DEFAULT 0 | |
-| `idempotency_key` | str | NOT NULL, UNIQUE | Client-supplied via `X-Idempotency-Key`; the retry guard |
+| `idempotency_key` | str | NOT NULL | Client-supplied via `X-Idempotency-Key`; part of `UNIQUE(tenant_id, idempotency_key)` |
 | `response_body` | text | NULLABLE | JSON string snapshot of the response, written in the same transaction |
 | `response_status_code` | int | NULLABLE | Status to replay for this key. Required so a retry returns the original status, not just the original body |
 | `created_at` | datetime | NOT NULL, INDEX | Naive UTC |
+
+Constraints on `usage_events`:
+- `UNIQUE(tenant_id, idempotency_key)` (`uq_usage_events_tenant_idempotency_key`): scopes idempotency per tenant so different tenants can independently use identical keys without collision.
+- `INDEX(tenant_id, created_at)` (`ix_usage_events_tenant_created_at`): optimizes tenant monthly rollup queries.
 
 **Why one row per request instead of a `type` + `quantity` design.**
 
@@ -107,10 +111,10 @@ integer. That design breaks in three specific ways:
 
 The one-row-per-request design collapses all three problems:
 
-- **One idempotency key maps to exactly one row.** The `UNIQUE` constraint on
-  `idempotency_key` is a hard database-level guarantee. A retried request
+- **One idempotency key per tenant maps to exactly one row.** The `UNIQUE(tenant_id, idempotency_key)`
+  constraint is a hard database-level guarantee. A retried request
   attempts an insert, hits the constraint, and the caller returns the previously
-  stored `response_body`. Metering is all-or-nothing because it is one insert.
+  stored `response_body` for that tenant. Metering is all-or-nothing because it is one insert.
 - **All buckets are real, typed, `NOT NULL` integer columns.** Summation is
   `SUM(input_tokens + cached_input_tokens + output_tokens + reasoning_tokens)`
   with no type dispatch, and no NULL handling.
@@ -301,13 +305,13 @@ produced no row, so there is no "failed event" to replay.
 
 Two distinct problems, two distinct mechanisms.
 
-**Double-metering a retried key.** The `UNIQUE` constraint on
-`usage_events.idempotency_key` is the authority. The pre-insert lookup in step 2
+**Double-metering a retried key.** The `UNIQUE(tenant_id, idempotency_key)`
+constraint on `usage_events` is the authority. The pre-insert lookup in step 2
 is only a fast path that avoids raising an exception on the common sequential
 retry; correctness does not depend on it, because the `INSERT` still runs and
 still hits the constraint. An `IntegrityError` on that constraint is caught, the
-session is rolled back, and the winning request's committed row is read back and
-replayed. Both callers end up with the same response.
+session is rolled back, and the winning request's committed row for that tenant
+is read back and replayed. Both callers end up with the same response.
 
 **Quota overshoot.** A lookup-then-insert is a read-modify-write race, so steps
 4-6 are held under a process-wide lock. This is sufficient for the current

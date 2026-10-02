@@ -5,7 +5,7 @@ Concurrency strategy
 Two separate problems, two separate mechanisms.
 
 1. "Don't double-meter a retried key."
-   The database UNIQUE constraint on usage_events.idempotency_key is the
+   The database UNIQUE constraint on (tenant_id, idempotency_key) is the
    authority. A pre-insert SELECT is only a fast path to avoid raising an
    exception on the common sequential-retry case; correctness does NOT depend
    on it, because the INSERT still runs and still hits the constraint. Any
@@ -71,10 +71,13 @@ def build_response(
     }
 
 
-def _replay(db: Session, key: str) -> MeteredResult | None:
-    """Fast path: return the already-committed response for this key, if any."""
+def _replay(db: Session, tenant_id: int, key: str) -> MeteredResult | None:
+    """Fast path: return this tenant's committed response for this key, if any."""
     row = db.execute(
-        select(UsageEvent).where(UsageEvent.idempotency_key == key)
+        select(UsageEvent).where(
+            UsageEvent.tenant_id == tenant_id,
+            UsageEvent.idempotency_key == key,
+        )
     ).scalar_one_or_none()
     if row is None:
         return None
@@ -106,7 +109,7 @@ def meter_request(
     """
     with _metering_lock:
         # (a) Already seen? Replay the original status and body verbatim.
-        existing = _replay(db, idempotency_key)
+        existing = _replay(db, tenant_id, idempotency_key)
         if existing is not None:
             return existing
 
@@ -157,7 +160,7 @@ def meter_request(
             # A concurrent request with the same key won the race. Undo our
             # partial work, then replay whatever it committed.
             db.rollback()
-            winner = _replay(db, idempotency_key)
+            winner = _replay(db, tenant_id, idempotency_key)
             if winner is None:
                 raise
             return winner

@@ -54,6 +54,51 @@ def test_same_key_twice_returns_identical_response_and_one_row(client, session):
     assert usage_count(session) == 1
 
 
+def test_same_idempotency_key_is_independent_per_tenant(client, session):
+    tenant_a, _ = make_tenant(client, name="Tenant A")
+    tenant_b, _ = make_tenant(client, name="Tenant B")
+    k = key()
+
+    first_a = client.post(
+        "/generate",
+        json={"tenant_id": tenant_a, "input_tokens": 10},
+        headers={"X-Idempotency-Key": k},
+    )
+    first_b = client.post(
+        "/generate",
+        json={"tenant_id": tenant_b, "input_tokens": 20},
+        headers={"X-Idempotency-Key": k},
+    )
+
+    assert first_a.status_code == first_b.status_code == 200
+    assert first_a.json()["tenant_id"] == tenant_a
+    assert first_b.json()["tenant_id"] == tenant_b
+    assert first_a.json()["usage_event_id"] != first_b.json()["usage_event_id"]
+
+    events = session.execute(
+        select(UsageEvent).where(UsageEvent.idempotency_key == k).order_by(UsageEvent.tenant_id)
+    ).scalars().all()
+    assert len(events) == 2
+    assert {event.tenant_id for event in events} == {tenant_a, tenant_b}
+    assert {event.idempotency_key for event in events} == {k}
+
+    retry_a = client.post(
+        "/generate",
+        json={"tenant_id": tenant_a, "input_tokens": 999},
+        headers={"X-Idempotency-Key": k},
+    )
+    retry_b = client.post(
+        "/generate",
+        json={"tenant_id": tenant_b, "input_tokens": 999},
+        headers={"X-Idempotency-Key": k},
+    )
+    assert retry_a.status_code == retry_b.status_code == 200
+    assert retry_a.json() == first_a.json()
+    assert retry_b.json() == first_b.json()
+    assert retry_a.json() != retry_b.json()
+    assert usage_count(session) == 2
+
+
 def test_first_and_replay_response_bytes_are_identical(client, session):
     """The bytes the client first receives must equal the bytes a retry gets.
 

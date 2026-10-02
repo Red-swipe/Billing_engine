@@ -67,8 +67,8 @@ input tokens on two upstream calls cannot be represented by a
 `type` + `quantity` ledger — the second write has nowhere to live. It also
 fragments idempotency across N rows, so a partially-applied retry becomes
 double-billing. Collapsing to one row makes the idempotency key a hard
-one-row-one-key guarantee from a single `UNIQUE` constraint. The full reasoning
-is in [DESIGN.md](DESIGN.md).
+one-row-one-key guarantee per tenant from a `UNIQUE(tenant_id, idempotency_key)`
+constraint. The full reasoning is in [DESIGN.md](DESIGN.md).
 
 **Quota is checked before the insert, not after.** The reverse order would let a
 rejected request create an orphan row that itself consumed quota, and would
@@ -253,7 +253,7 @@ pytest -q
 ```
 
 ```
-87 passed
+88 passed
 ```
 
 The suite runs against a throwaway SQLite database per test, created under the
@@ -306,7 +306,7 @@ credentials and the Stripe CLI.
 | Tenant creation, automatic Free subscription | Implemented |
 | `POST /generate` metering, idempotency, quota | Implemented |
 | `GET /usage/{tenant_id}` monthly rollup | Implemented |
-| Test suite (Items 1-7) | 87 passed |
+| Test suite (Items 1-7) | 88 passed |
 | `POST /checkout/{tenant_id}` | Implemented; API-key protected (GET compatibility alias) |
 | `POST /webhooks/stripe` | Implemented |
 | Background usage-cost reconciliation | Implemented with bounded retries and failure alert |
